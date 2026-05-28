@@ -59,9 +59,20 @@ export function calculateFibLevels(preMarketHigh, preMarketLow) {
 export function extractPreMarketHL(candleData) {
   if (!candleData || candleData.s === 'no_data' || !candleData.h) return null
   const { h, l } = candleData
-  if (!h.length || !l.length) return null
+  if (!Array.isArray(h) || !Array.isArray(l) || !h.length || !l.length) return null
   return {
     high: Math.max(...h),
     low: Math.min(...l),
   }
+}
+
+// Fallback: derive pre-market range from /quote response.
+// During pre-market hours, `h` and `l` reflect the pre-market session.
+// During regular hours they reflect intraday range, which is a rough proxy.
+export function extractPreMarketHLFromQuote(quote) {
+  if (!quote) return null
+  const high = quote.h
+  const low = quote.l
+  if (!high || !low || high <= low) return null
+  return { high, low }
 }
