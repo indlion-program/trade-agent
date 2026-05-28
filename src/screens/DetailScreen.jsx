@@ -10,7 +10,7 @@ import { SkeletonDetail } from '../components/SkeletonCard'
 import { fetchFullAnalysis, getPreMarketCandles } from '../services/finnhub'
 import { runAllFilters } from '../utils/filters'
 import { classifyNewsList } from '../utils/newsClassifier'
-import { calculateFibLevels, extractPreMarketHL } from '../utils/fibonacci'
+import { calculateFibLevels, extractPreMarketHL, extractPreMarketHLFromQuote } from '../utils/fibonacci'
 import { formatMarketCap, formatVol } from '../utils/filters'
 
 export function DetailScreen({ stockData: initialData, onBack }) {
@@ -35,21 +35,40 @@ export function DetailScreen({ stockData: initialData, onBack }) {
   const exchange = profile?.exchange ?? '—'
   const vol = quote?.v ?? null
 
-  // Load pre-market candles for Fibonacci
+  // Load pre-market candles for Fibonacci.
+  // /stock/candle is paid-tier only on Finnhub; fall back to /quote h/l.
   useEffect(() => {
+    let cancelled = false
     setFibLoading(true)
     getPreMarketCandles(symbol)
-      .then(candles => {
+      .then((candles) => {
+        if (cancelled) return
         const hl = extractPreMarketHL(candles)
         if (hl) {
           setFib(calculateFibLevels(hl.high, hl.low))
+          return
+        }
+        // Fallback to quote-derived range
+        const fallback = extractPreMarketHLFromQuote(quote)
+        if (fallback) {
+          setFib(calculateFibLevels(fallback.high, fallback.low))
         } else {
           setFib(null)
         }
       })
-      .catch(() => setFib(null))
-      .finally(() => setFibLoading(false))
-  }, [symbol])
+      .catch(() => {
+        if (cancelled) return
+        // Network/auth failure → try quote fallback
+        const fallback = extractPreMarketHLFromQuote(quote)
+        setFib(fallback ? calculateFibLevels(fallback.high, fallback.low) : null)
+      })
+      .finally(() => {
+        if (!cancelled) setFibLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [symbol, quote])
 
   // Refresh full data in background
   useEffect(() => {

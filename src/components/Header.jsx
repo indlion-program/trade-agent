@@ -10,10 +10,18 @@ const STATUS_COLORS = {
 
 export function Header({ onBack, title, subtitle }) {
   const { time, date, status } = useMarketClock()
-  const [apiCalls, setApiCalls] = useState(window.__apiCallsRemaining ?? 60)
+  const [apiCalls, setApiCalls] = useState(window.__apiCallsRemaining ?? 55)
+  const [queued, setQueued] = useState(window.__apiQueueLength ?? 0)
 
   useEffect(() => {
-    function handle(e) { setApiCalls(e.detail) }
+    function handle(e) {
+      if (typeof e.detail === 'object') {
+        setApiCalls(e.detail.remaining)
+        setQueued(e.detail.queued)
+      } else {
+        setApiCalls(e.detail)
+      }
+    }
     window.addEventListener('apiCountUpdate', handle)
     return () => window.removeEventListener('apiCountUpdate', handle)
   }, [])
@@ -57,12 +65,13 @@ export function Header({ onBack, title, subtitle }) {
           )}
 
           <div className="flex items-center gap-2">
-            {/* API counter */}
+            {/* API counter + queue depth */}
             <span
               className="text-xs font-mono px-1.5 py-0.5 rounded"
               style={{ color: apiCalls < 10 ? '#ef4444' : '#64748b', background: '#1a1a1a' }}
+              title={queued > 0 ? `${queued} call(s) queued` : ''}
             >
-              {apiCalls}/60
+              {apiCalls}/55{queued > 0 ? ` ·${queued}` : ''}
             </span>
 
             {/* Market status badge */}
