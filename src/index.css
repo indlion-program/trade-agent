@@ -1,0 +1,89 @@
+@import "tailwindcss";
+
+:root {
+  --color-bg: #0f0f0f;
+  --color-surface: #1a1a1a;
+  --color-surface2: #222222;
+  --color-border: #2a2a2a;
+  --color-green: #22c55e;
+  --color-red: #ef4444;
+  --color-amber: #f59e0b;
+  --color-text: #f1f5f9;
+  --color-muted: #64748b;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+  box-sizing: border-box;
+}
+
+html {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  overscroll-behavior-y: contain;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: var(--color-bg); }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 2px; }
+
+/* Pull-to-refresh indicator */
+.ptr-indicator {
+  text-align: center;
+  padding: 12px;
+  color: var(--color-muted);
+  font-size: 14px;
+}
+
+/* Skeleton animation */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, #1a1a1a 25%, #2a2a2a 50%, #1a1a1a 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 4px;
+}
+
+/* Live price pulse */
+@keyframes pricePulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.6; }
+  100% { opacity: 1; }
+}
+
+.price-updating {
+  animation: pricePulse 0.3s ease-in-out;
+}
+
+/* Ticker flash */
+@keyframes flashGreen {
+  0% { background-color: rgba(34, 197, 94, 0.3); }
+  100% { background-color: transparent; }
+}
+@keyframes flashRed {
+  0% { background-color: rgba(239, 68, 68, 0.3); }
+  100% { background-color: transparent; }
+}
+
+.flash-green { animation: flashGreen 0.5s ease-out; }
+.flash-red { animation: flashRed 0.5s ease-out; }
