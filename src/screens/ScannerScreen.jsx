@@ -10,6 +10,7 @@ import { fetchFullAnalysis, clearCache } from '../services/finnhub'
 import { runAllFilters } from '../utils/filters'
 import { classifyNewsList } from '../utils/newsClassifier'
 import { UNIVERSE_GROUPS } from '../data/universe'
+import { getWatchlist } from '../services/watchlist'
 
 const STORAGE_KEY = 'scanner-state-v2'
 
@@ -35,23 +36,32 @@ export function ScannerScreen({ onSelectStock }) {
 
   const [universeId, setUniverseId] = useState(persisted?.universeId || 'curated')
   const [fullUniverse, setFullUniverse] = useState(persisted?.fullUniverse || null)
-  const [searchResults, setSearchResults] = useState({}) // ad-hoc lookups
+  const [searchResults, setSearchResults] = useState({})
   const [searchQuery, setSearchQuery] = useState('')
   const [searching, setSearching] = useState(false)
-  const [sortMode, setSortMode] = useState('drop') // drop | status | rr
-  const [filterMode, setFilterMode] = useState('all') // all | green | amber | red
+  const [sortMode, setSortMode] = useState('drop') // drop | status
+  const [filterMode, setFilterMode] = useState('all') // all | green | amber | red | watch
+  const [watchlist, setWatchlist] = useState(() => getWatchlist())
 
   // Persist universe choice + full universe cache
   useEffect(() => {
     savePersisted({ universeId, fullUniverse })
   }, [universeId, fullUniverse])
 
+  // Keep watchlist in sync
+  useEffect(() => {
+    function handle() { setWatchlist(getWatchlist()) }
+    window.addEventListener('watchlistChange', handle)
+    return () => window.removeEventListener('watchlistChange', handle)
+  }, [])
+
   const currentUniverse =
     universeId === 'full' && fullUniverse ? fullUniverse : UNIVERSE_GROUPS[universeId] || []
 
   const handleScan = useCallback(async () => {
-    if (currentUniverse.length === 0) return
-    await scan(currentUniverse)
+    // TV screener mode ignores the curated universe — it scans all US stocks automatically.
+    // Pass the universe list anyway as a fallback for Finnhub pass-1.
+    await scan(currentUniverse.length > 0 ? currentUniverse : UNIVERSE_GROUPS.curated)
   }, [currentUniverse, scan])
 
   const handleRefresh = useCallback(async () => {
@@ -74,7 +84,6 @@ export function ScannerScreen({ onSelectStock }) {
         const newsClassified = classifyNewsList(raw.news || [])
         const data = { ...raw, filterResult, newsClassified }
         setSearchResults((prev) => ({ ...prev, [sym]: data }))
-        // Auto-open detail
         onSelectStock(data)
       } catch (err) {
         alert(`Failed to load ${sym}: ${err.message}`)
@@ -86,11 +95,9 @@ export function ScannerScreen({ onSelectStock }) {
     [searchQuery, onSelectStock]
   )
 
-  // Combine candidate list with their analyses (or quote-only for in-flight)
   const candidateDisplay = scanState.candidates.map(({ symbol, quote }) => {
     const analysis = scanState.analyses[symbol]
     if (analysis) return analysis
-    // Fallback while pass 2 hasn't reached this candidate yet
     return {
       symbol,
       quote,
@@ -107,11 +114,12 @@ export function ScannerScreen({ onSelectStock }) {
       const order = { GREEN: 0, AMBER: 1, RED: 2 }
       return (order[a.filterResult?.status] ?? 3) - (order[b.filterResult?.status] ?? 3)
     }
-    return (a.quote?.dp ?? 0) - (b.quote?.dp ?? 0)
+    return (a.quote?.dp ?? 0) - (b.quote?.dp ?? 0) // biggest drop first
   })
 
   // Filter
   const filtered = sorted.filter((d) => {
+    if (filterMode === 'watch') return watchlist.includes(d.symbol)
     if (filterMode === 'all') return true
     return d.filterResult?.status === filterMode.toUpperCase()
   })
@@ -123,8 +131,10 @@ export function ScannerScreen({ onSelectStock }) {
   const greenCount = candidateDisplay.filter((d) => d.filterResult?.status === 'GREEN').length
   const amberCount = candidateDisplay.filter((d) => d.filterResult?.status === 'AMBER').length
   const redCount = candidateDisplay.filter((d) => d.filterResult?.status === 'RED').length
+  const watchCount = candidateDisplay.filter((d) => watchlist.includes(d.symbol)).length
 
-  const isScanning = scanState.phase === 'pass1' || scanState.phase === 'pass2'
+  const isScanning =
+    scanState.phase === 'tv_scan' || scanState.phase === 'pass1' || scanState.phase === 'pass2'
 
   return (
     <div className="min-h-screen" style={{ background: '#0f0f0f' }}>
@@ -175,6 +185,19 @@ export function ScannerScreen({ onSelectStock }) {
           </button>
         </form>
 
+        {/* TV Scan tip — shown before first scan */}
+        {scanState.phase === 'idle' && candidateDisplay.length === 0 && (
+          <div
+            className="flex items-center gap-2 rounded-xl px-4 py-2.5 mb-3 border"
+            style={{ background: 'rgba(34,197,94,0.05)', borderColor: 'rgba(34,197,94,0.2)' }}
+          >
+            <span style={{ color: '#22c55e', fontSize: '18px' }}>⚡</span>
+            <span className="text-xs" style={{ color: '#86efac' }}>
+              Instant scan via TradingView — all US stocks in one shot, no API limit
+            </span>
+          </div>
+        )}
+
         {/* Universe picker */}
         <UniverseSelector
           value={universeId}
@@ -189,7 +212,7 @@ export function ScannerScreen({ onSelectStock }) {
         {/* Scan button */}
         <button
           onClick={isScanning ? cancel : handleScan}
-          disabled={currentUniverse.length === 0}
+          disabled={!isScanning && currentUniverse.length === 0}
           className="w-full py-3.5 rounded-xl font-bold text-base mb-4 disabled:opacity-60 flex items-center justify-center gap-2"
           style={{
             background: isScanning ? '#3a1e1e' : '#1e3a2f',
@@ -207,7 +230,7 @@ export function ScannerScreen({ onSelectStock }) {
                 <path d="M13 13l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                 <path d="M6 8h4M8 6v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
               </svg>
-              Scan {currentUniverse.length.toLocaleString()} Symbols
+              ⚡ Scan All US Stocks
             </>
           )}
         </button>
@@ -219,39 +242,20 @@ export function ScannerScreen({ onSelectStock }) {
         {candidateDisplay.length > 0 && (
           <>
             <div className="flex gap-1.5 mb-3 overflow-x-auto pb-1" style={{ scrollbarWidth: 'thin' }}>
-              <FilterPill
-                active={filterMode === 'all'}
-                onClick={() => setFilterMode('all')}
-                label="All"
-                count={candidateDisplay.length}
-              />
-              <FilterPill
-                active={filterMode === 'green'}
-                onClick={() => setFilterMode('green')}
-                label="GREEN"
-                count={greenCount}
-                color="#22c55e"
-              />
-              <FilterPill
-                active={filterMode === 'amber'}
-                onClick={() => setFilterMode('amber')}
-                label="AMBER"
-                count={amberCount}
-                color="#f59e0b"
-              />
-              <FilterPill
-                active={filterMode === 'red'}
-                onClick={() => setFilterMode('red')}
-                label="AVOID"
-                count={redCount}
-                color="#ef4444"
-              />
+              <FilterPill active={filterMode === 'all'} onClick={() => setFilterMode('all')} label="All" count={candidateDisplay.length} />
+              <FilterPill active={filterMode === 'green'} onClick={() => setFilterMode('green')} label="GREEN" count={greenCount} color="#22c55e" />
+              <FilterPill active={filterMode === 'amber'} onClick={() => setFilterMode('amber')} label="AMBER" count={amberCount} color="#f59e0b" />
+              <FilterPill active={filterMode === 'red'} onClick={() => setFilterMode('red')} label="AVOID" count={redCount} color="#ef4444" />
+              {watchCount > 0 && (
+                <FilterPill active={filterMode === 'watch'} onClick={() => setFilterMode('watch')} label="♥ Watch" count={watchCount} color="#f87171" />
+              )}
             </div>
 
             {/* Sort toggle */}
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs" style={{ color: '#64748b' }}>
                 {filtered.length} of {candidateDisplay.length} candidates
+                {scanState.tvMode && <span style={{ color: '#22c55e' }}> · ⚡ instant</span>}
               </span>
               <div className="flex gap-1.5 text-xs">
                 <button
@@ -282,20 +286,20 @@ export function ScannerScreen({ onSelectStock }) {
         {/* Empty state */}
         {scanState.phase === 'idle' && candidateDisplay.length === 0 && searchOnly.length === 0 && (
           <div className="text-center py-16">
-            <div className="text-5xl mb-4">📡</div>
+            <div className="text-5xl mb-4">⚡</div>
             <div className="text-lg font-semibold mb-2" style={{ color: '#f1f5f9' }}>
-              Ready to Scan
+              Instant Gap Scanner
             </div>
             <div className="text-sm" style={{ color: '#64748b' }}>
-              Pre-screens every symbol with 1 cheap API call,
+              Scans all US stocks via TradingView in seconds.
               <br />
-              then runs full analysis on candidates that drop ≥5%.
+              Full Finnhub analysis runs only on gap-down candidates.
             </div>
             <div
               className="mt-6 inline-block text-xs px-3 py-1.5 rounded-full"
               style={{ background: '#1a1a1a', color: '#94a3b8', border: '1px solid #2a2a2a' }}
             >
-              Tip — use pre-market hours for full universe scans
+              Best used during pre-market hours (4 AM – 9:30 AM ET)
             </div>
           </div>
         )}
@@ -312,7 +316,6 @@ export function ScannerScreen({ onSelectStock }) {
               onClick={() => !data._pending && onSelectStock(data)}
             />
           ))}
-          {/* Skeleton placeholders for pass-2 work in progress */}
           {scanState.phase === 'pass2' &&
             scanState.candidates.length > scanState.pass2Done &&
             Array.from({ length: Math.min(3, scanState.candidates.length - scanState.pass2Done) }).map(

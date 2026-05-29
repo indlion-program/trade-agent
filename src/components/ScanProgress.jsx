@@ -1,8 +1,10 @@
 export function ScanProgress({ state, onCancel }) {
-  const { phase, total, pass1Done, pass1Errors, candidates, pass2Done, startedAt } = state
+  const { phase, total, pass1Done, pass1Errors, candidates, pass2Done, startedAt, tvMode } = state
   if (phase === 'idle') return null
 
-  const pass1Pct = total > 0 ? Math.round((pass1Done / total) * 100) : 0
+  const isActive = phase === 'tv_scan' || phase === 'pass1' || phase === 'pass2'
+
+  const pass1Pct = total > 0 ? Math.round((pass1Done / total) * 100) : (phase === 'tv_scan' ? 0 : 100)
   const pass2Total = candidates.length
   const pass2Pct = pass2Total > 0 ? Math.round((pass2Done / pass2Total) * 100) : 0
 
@@ -16,12 +18,14 @@ export function ScanProgress({ state, onCancel }) {
   const etaMin = etaSec !== null ? Math.floor(etaSec / 60) : null
 
   const phaseLabel =
-    phase === 'pass1'
+    phase === 'tv_scan'
+      ? '⚡ Instant scan via TradingView...'
+      : phase === 'pass1'
       ? 'Pass 1 — pre-screening quotes'
       : phase === 'pass2'
       ? 'Pass 2 — full filter analysis'
       : phase === 'done'
-      ? 'Scan complete'
+      ? tvMode ? `⚡ Instant scan complete` : 'Scan complete'
       : phase === 'cancelled'
       ? 'Scan cancelled'
       : phase
@@ -33,7 +37,7 @@ export function ScanProgress({ state, onCancel }) {
     >
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
-          {(phase === 'pass1' || phase === 'pass2') && (
+          {isActive && (
             <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
               <circle cx="12" cy="12" r="10" stroke="#2a2a2a" strokeWidth="2" />
               <path d="M12 2a10 10 0 010 20" stroke="#22c55e" strokeWidth="2" strokeLinecap="round" />
@@ -43,7 +47,7 @@ export function ScanProgress({ state, onCancel }) {
             {phaseLabel}
           </span>
         </div>
-        {(phase === 'pass1' || phase === 'pass2') && onCancel && (
+        {isActive && onCancel && (
           <button
             onClick={onCancel}
             className="text-xs font-semibold px-2.5 py-1 rounded"
@@ -54,29 +58,50 @@ export function ScanProgress({ state, onCancel }) {
         )}
       </div>
 
-      {/* Pass 1 progress */}
-      <div className="mt-3">
-        <div className="flex justify-between text-xs mb-1">
-          <span style={{ color: '#94a3b8' }}>
-            Pre-screen: {pass1Done.toLocaleString()} / {total.toLocaleString()}
-          </span>
-          <span className="font-mono tabular-nums" style={{ color: '#64748b' }}>
-            {pass1Pct}%
-          </span>
+      {/* Pass 1 progress bar — hidden during tv_scan (instant) */}
+      {phase !== 'tv_scan' && (
+        <div className="mt-3">
+          <div className="flex justify-between text-xs mb-1">
+            <span style={{ color: '#94a3b8' }}>
+              {tvMode ? 'TV Screener' : 'Pre-screen'}: {pass1Done.toLocaleString()} / {total.toLocaleString()}
+            </span>
+            <span className="font-mono tabular-nums" style={{ color: '#64748b' }}>
+              {pass1Pct}%
+            </span>
+          </div>
+          <div className="h-1.5 rounded-full overflow-hidden" style={{ background: '#0f0f0f' }}>
+            <div
+              className="h-full transition-all duration-300"
+              style={{
+                width: `${pass1Pct}%`,
+                background: phase === 'pass1' ? '#22c55e' : phase === 'cancelled' ? '#ef4444' : '#16a34a',
+              }}
+            />
+          </div>
         </div>
-        <div className="h-1.5 rounded-full overflow-hidden" style={{ background: '#0f0f0f' }}>
-          <div
-            className="h-full transition-all duration-300"
-            style={{
-              width: `${pass1Pct}%`,
-              background: phase === 'pass1' ? '#22c55e' : phase === 'cancelled' ? '#ef4444' : '#16a34a',
-            }}
-          />
+      )}
+
+      {/* TV scan instant bar */}
+      {phase === 'tv_scan' && (
+        <div className="mt-3">
+          <div className="h-1.5 rounded-full overflow-hidden" style={{ background: '#0f0f0f' }}>
+            <div
+              className="h-full"
+              style={{
+                width: '60%',
+                background: 'linear-gradient(90deg, #22c55e40 0%, #22c55e 50%, #22c55e40 100%)',
+                animation: 'shimmer 1.2s infinite',
+              }}
+            />
+          </div>
+          <div className="text-xs mt-1" style={{ color: '#64748b' }}>
+            Scanning all US stocks simultaneously...
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Pass 2 progress */}
-      {pass2Total > 0 && (
+      {(phase === 'pass2' || (phase === 'done' && pass2Total > 0)) && (
         <div className="mt-2">
           <div className="flex justify-between text-xs mb-1">
             <span style={{ color: '#94a3b8' }}>

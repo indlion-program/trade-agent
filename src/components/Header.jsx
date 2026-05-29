@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useMarketClock } from '../hooks/useMarketClock'
+import { getEtTime } from '../utils/marketTime'
 
 const STATUS_COLORS = {
   'PRE-MARKET': 'text-amber-400 bg-amber-400/10 border-amber-400/30',
@@ -8,10 +9,37 @@ const STATUS_COLORS = {
   'CLOSED': 'text-slate-400 bg-slate-400/10 border-slate-400/30',
 }
 
+// Seconds until next market open (9:30 AM ET). Returns null if market is open.
+function secsUntilOpen() {
+  const now = new Date()
+  const et = getEtTime(now)
+  const h = et.getUTCHours()
+  const m = et.getUTCMinutes()
+  const s = et.getUTCSeconds()
+  const day = et.getUTCDay()
+  const totalSecs = h * 3600 + m * 60 + s
+  const openSecs = 9 * 3600 + 30 * 60
+
+  // Weekdays before 9:30 AM
+  if (day >= 1 && day <= 5 && totalSecs < openSecs) {
+    return openSecs - totalSecs
+  }
+  return null
+}
+
+function formatCountdown(secs) {
+  const h = Math.floor(secs / 3600)
+  const m = Math.floor((secs % 3600) / 60)
+  const s = secs % 60
+  if (h > 0) return `${h}h ${m.toString().padStart(2, '0')}m`
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
+
 export function Header({ onBack, title, subtitle }) {
   const { time, date, status } = useMarketClock()
   const [apiCalls, setApiCalls] = useState(window.__apiCallsRemaining ?? 55)
   const [queued, setQueued] = useState(window.__apiQueueLength ?? 0)
+  const [countdown, setCountdown] = useState(() => secsUntilOpen())
 
   useEffect(() => {
     function handle(e) {
@@ -24,6 +52,12 @@ export function Header({ onBack, title, subtitle }) {
     }
     window.addEventListener('apiCountUpdate', handle)
     return () => window.removeEventListener('apiCountUpdate', handle)
+  }, [])
+
+  // Countdown tick (updates every second via marketClock already, but we need secs)
+  useEffect(() => {
+    const t = setInterval(() => setCountdown(secsUntilOpen()), 1000)
+    return () => clearInterval(t)
   }, [])
 
   const statusColor = STATUS_COLORS[status] || STATUS_COLORS['CLOSED']
@@ -91,7 +125,17 @@ export function Header({ onBack, title, subtitle }) {
               {subtitle}
             </span>
           ) : (
-            <span className="text-xs" style={{ color: '#64748b' }}>{date}</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs" style={{ color: '#64748b' }}>{date}</span>
+              {countdown !== null && (
+                <span
+                  className="text-xs font-mono font-semibold px-1.5 py-0.5 rounded"
+                  style={{ background: 'rgba(245,158,11,0.1)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.2)' }}
+                >
+                  Open in {formatCountdown(countdown)}
+                </span>
+              )}
+            </div>
           )}
           <span className="text-xs font-mono tabular-nums" style={{ color: '#64748b' }}>
             {time}
