@@ -23,7 +23,6 @@ jobs:
       - run: npm run build
         env:
           VITE_FINNHUB_KEY: ${{ secrets.VITE_FINNHUB_KEY }}
-          VITE_BASE_PATH: /trade-agent/
 
       - uses: peaceiris/actions-gh-pages@v4
         with:
