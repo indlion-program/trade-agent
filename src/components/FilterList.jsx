@@ -1,24 +1,63 @@
 import { FilterBadge } from './StatusBadge'
 
-const FILTER_NAMES = [
-  { key: 'preMarketDrop', label: 'Pre-market Drop', desc: '≤ -5.0%' },
-  { key: 'price', label: 'Price', desc: '> $3.00' },
-  { key: 'dailyVolume', label: 'Avg Daily Volume', desc: '≥ 750K' },
-  { key: 'preMarketVolume', label: 'Pre-market Volume', desc: '≥ 50K' },
-  { key: 'pe', label: 'P/E Ratio (TTM)', desc: '> 0 (profitable)' },
-  { key: 'marketCap', label: 'Market Cap', desc: '≥ $500M' },
-  { key: 'noReverseSplit', label: 'No Reverse Split', desc: 'Past 12 months' },
-  { key: 'notEarningsDay', label: 'Not Earnings Day', desc: 'Skip earnings' },
-  { key: 'entryTiming', label: 'Entry Timing', desc: 'Wait for green candle' },
-  { key: 'americanBulls', label: 'AmericanBulls Signal', desc: 'Not SELL/STRONG SELL' },
+const FILTERS_DOWN = [
+  { key: 'preMarketMove',   label: 'Pre-market Drop',     desc: '≤ -7%' },
+  { key: 'maxGap',          label: 'Max Gap (Climax)',     desc: '> -30% (climax excluded)' },
+  { key: 'price',           label: 'Price',               desc: '≥ $8' },
+  { key: 'dailyVolume',     label: 'Avg Daily Volume',    desc: '≥ 1.5M' },
+  { key: 'preMarketVolume', label: 'Pre-market Volume',   desc: '≥ 100K' },
+  { key: 'pmVolumeRatio',   label: 'PM Volume Ratio',     desc: '≥ 15% of avg daily vol' },
+  { key: 'marketCap',       label: 'Market Cap',          desc: '≥ $1B' },
+  { key: 'noReverseSplit',  label: 'No Reverse Split',    desc: 'Past 12 months' },
+  { key: 'notEarningsDay',  label: 'Not Earnings Day',    desc: 'Skip earnings' },
+  { key: 'entryTiming',     label: 'Entry Timing',        desc: 'Wait for green candle' },
+  { key: 'americanBulls',   label: 'AmericanBulls Signal',desc: 'Not SELL/STRONG SELL' },
+  { key: 'riskReward',      label: 'Risk / Reward',       desc: '≥ 2:1 (Fib 0.236 entry)' },
 ]
 
-export function FilterList({ filters }) {
+const FILTERS_EARNINGS = [
+  { key: 'preMarketMove',   label: 'Pre-market Drop',     desc: '≤ -10%' },
+  { key: 'maxGap',          label: 'Max Gap',             desc: '> -60% (extreme excluded)' },
+  { key: 'price',           label: 'Price',               desc: '≥ $10' },
+  { key: 'dailyVolume',     label: 'Avg Daily Volume',    desc: '≥ 2M' },
+  { key: 'preMarketVolume', label: 'Pre-market Volume',   desc: '≥ 200K' },
+  { key: 'pmVolumeRatio',   label: 'PM Volume Ratio',     desc: '≥ 25% of avg daily vol' },
+  { key: 'marketCap',       label: 'Market Cap',          desc: '≥ $2B' },
+  { key: 'noReverseSplit',  label: 'No Reverse Split',    desc: 'Past 12 months' },
+  { key: 'notEarningsDay',  label: 'Earnings Day',        desc: 'Earnings required today' },
+  { key: 'entryTiming',     label: 'Entry Timing',        desc: 'Wait for green candle' },
+  { key: 'americanBulls',   label: 'AmericanBulls Signal',desc: 'Not SELL/STRONG SELL' },
+  { key: 'riskReward',      label: 'Risk / Reward',       desc: '≥ 2:1 (Fib 0.236 entry)' },
+]
+
+const FILTERS_UP = [
+  { key: 'preMarketMove',   label: 'Pre-market Gain',     desc: '≥ +7%' },
+  { key: 'maxGap',          label: 'Max Gap',             desc: 'N/A' },
+  { key: 'price',           label: 'Price',               desc: '≥ $8' },
+  { key: 'dailyVolume',     label: 'Avg Daily Volume',    desc: '≥ 1.5M' },
+  { key: 'preMarketVolume', label: 'Pre-market Volume',   desc: '≥ 150K' },
+  { key: 'pmVolumeRatio',   label: 'PM Volume Ratio',     desc: '≥ 20% of avg daily vol' },
+  { key: 'marketCap',       label: 'Market Cap',          desc: '≥ $1B' },
+  { key: 'noReverseSplit',  label: 'No Reverse Split',    desc: 'Past 12 months' },
+  { key: 'notEarningsDay',  label: 'Not Earnings Day',    desc: 'Skip earnings' },
+  { key: 'entryTiming',     label: 'Entry Timing',        desc: 'Wait for green candle' },
+  { key: 'americanBulls',   label: 'AmericanBulls Signal',desc: 'Not SELL/STRONG SELL' },
+  { key: 'riskReward',      label: 'Risk / Reward',       desc: '≥ 2:1 (Fib 0.618 entry)' },
+]
+
+const FILTER_MAP = {
+  gap_down:     FILTERS_DOWN,
+  earnings_down: FILTERS_EARNINGS,
+  gap_up:       FILTERS_UP,
+}
+
+export function FilterList({ filters, mode = 'gap_down' }) {
   if (!filters) return null
+  const rows = FILTER_MAP[mode] ?? FILTERS_DOWN
 
   return (
     <div className="space-y-1">
-      {FILTER_NAMES.map(({ key, label, desc }) => {
+      {rows.map(({ key, label, desc }) => {
         const f = filters[key]
         if (!f) return null
         return (
@@ -32,12 +71,6 @@ export function FilterList({ filters }) {
               <div className="text-sm font-medium" style={{ color: '#f1f5f9' }}>{label}</div>
               <div className="text-xs mt-0.5" style={{ color: '#64748b' }}>{f.reason || desc}</div>
             </div>
-            {f.value !== null && f.value !== undefined && (
-              <div className="text-sm font-mono tabular-nums shrink-0" style={{ color: '#94a3b8' }}>
-                {typeof f.value === 'number' && key === 'pe' ? f.value.toFixed(1) : ''}
-                {typeof f.value === 'boolean' ? '' : ''}
-              </div>
-            )}
           </div>
         )
       })}

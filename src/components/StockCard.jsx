@@ -11,7 +11,8 @@ export function StockCard({ data, onClick }) {
   const vol = quote?.v ?? null
   const companyName = profile?.name ?? data.name ?? symbol
   const status = filterResult?.status ?? 'AMBER'
-  const rr = data.riskReward ?? null
+  const score  = filterResult?.score ?? null
+  const rr = filterResult?.filters?.riskReward?.value ?? data.riskReward ?? null
 
   const [watched, setWatched] = useState(() => isWatched(symbol))
 
@@ -89,7 +90,7 @@ export function StockCard({ data, onClick }) {
                 />
               </svg>
             </button>
-            <StatusBadge status={status} size="sm" />
+            <StatusBadge status={status} score={score} size="sm" />
           </div>
         </div>
 
@@ -120,12 +121,12 @@ export function StockCard({ data, onClick }) {
                 color: hardFails === 0 ? '#22c55e' : hardFails <= 2 ? '#f59e0b' : '#ef4444',
               }}
             >
-              {filterPassCount}/10 filters
+              {hardFails === 0 ? `${filterPassCount} pass` : `${hardFails} fail`}
             </span>
           )}
           {rr !== null && rr >= 2.0 && (
             <span className="text-xs px-2 py-0.5 rounded font-mono" style={{ background: '#222', color: '#22c55e' }}>
-              R/R {rr}x
+              R/R 1:{rr}
             </span>
           )}
         </div>

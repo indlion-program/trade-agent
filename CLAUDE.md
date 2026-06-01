@@ -177,7 +177,7 @@ Or push to `main` branch — auto-deploys via Vercel GitHub integration.
 
 2. **Pre-market volume on Finnhub** — `/quote?v` field is total day volume, not pure pre-market. TradingView screener provides real `premarket_volume`.
 
-3. **AmericanBulls filter (F10)** — manual check only. App opens the link, user checks the checkbox. No automated integration possible (no public API).
+3. **AmericanBulls filter (F10)** — auto-fetched via `api/americanbulls.js` (server-side HTML scraper, no public API). Signal displayed in detail view; F10 in filter list updates live. Falls back to "Check manually" if scrape fails.
 
 4. **Filter 9 (entry timing)** — always shows as pending (null). This is correct — it's a rule the trader enforces manually. The 9:30 AM first-green-candle rule cannot be automated in a pre-market scanner.
 

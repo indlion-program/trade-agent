@@ -7,21 +7,25 @@ import { TradePlan } from '../components/TradePlan'
 import { NewsFeed } from '../components/NewsFeed'
 import { LivePriceTicker } from '../components/LivePriceTicker'
 import { SkeletonDetail } from '../components/SkeletonCard'
-import { fetchFullAnalysis, getPreMarketCandles } from '../services/finnhub'
-import { runAllFilters } from '../utils/filters'
+import { fetchFullAnalysis } from '../services/finnhub'
+import { BuyModal } from '../components/BuyModal'
+import { runAllFilters, filterAmericanBulls, computeScore } from '../utils/filters'
+import { fetchAmericanBullsSignal } from '../services/americanbulls'
 import { classifyNewsList } from '../utils/newsClassifier'
-import { calculateFibLevels, extractPreMarketHL, extractPreMarketHLFromQuote } from '../utils/fibonacci'
+import { calculateFibLevels } from '../utils/fibonacci'
 import { formatMarketCap, formatVol } from '../utils/filters'
 import { isWatched, toggleWatch } from '../services/watchlist'
 
 export function DetailScreen({ stockData: initialData, onBack }) {
   const [data, setData] = useState(initialData)
-  const [fib, setFib] = useState(null)
-  const [fibLoading, setFibLoading] = useState(true)
-  const [americanBullsChecked, setAmericanBullsChecked] = useState(false)
+  // fib is derived — no state needed
+  const [abSignal, setAbSignal] = useState(null)
+  const [abLoading, setAbLoading] = useState(true)
+  const [abError, setAbError] = useState(null)
   const [activeTab, setActiveTab] = useState('plan')
   const [watched, setWatched] = useState(() => isWatched(initialData.symbol))
   const [copied, setCopied] = useState(false)
+  const [showBuyModal, setShowBuyModal] = useState(false)
 
   const { symbol } = data
   const quote = data.quote
@@ -38,54 +42,45 @@ export function DetailScreen({ stockData: initialData, onBack }) {
   const exchange = profile?.exchange ?? data.exchange ?? '—'
   const vol = quote?.v ?? null
 
-  // Load pre-market candles for Fibonacci.
-  // /stock/candle is paid-tier only on Finnhub free plan; falls back to /quote h/l.
+  // Mode-aware Fibonacci
+  const mode = data.mode || 'gap_down'
+  const tv = data.tvData
+  const isGapUp = mode === 'gap_up'
+  const fib = (() => {
+    if (isGapUp) {
+      // gap_up: anchor low=prevClose, high=pmHigh; targets are extensions above pmHigh
+      const hi = tv?.pmHigh ?? quote?.h ?? null
+      const lo = tv?.prevClose ?? quote?.pc ?? null
+      return hi && lo && hi > lo ? calculateFibLevels(hi, lo, { extensions: true, mode: 'gap_up' }) : null
+    }
+    // gap_down / earnings_down: anchor high=prevClose (gap origin), low=pmLow (gap bottom)
+    const hi = tv?.prevClose ?? quote?.pc ?? null
+    const lo = tv?.pmLow ?? quote?.l ?? null
+    return hi && lo && hi > lo ? calculateFibLevels(hi, lo, { mode }) : null
+  })()
+
+  // Auto-fetch AmericanBulls signal
   useEffect(() => {
     let cancelled = false
-    setFibLoading(true)
-    getPreMarketCandles(symbol)
-      .then((candles) => {
-        if (cancelled) return
-        const hl = extractPreMarketHL(candles)
-        if (hl) {
-          setFib(calculateFibLevels(hl.high, hl.low))
-          return
-        }
-        const fallback = extractPreMarketHLFromQuote(quote)
-        if (fallback) {
-          setFib(calculateFibLevels(fallback.high, fallback.low))
-        } else {
-          // Try tvData if available (from TradingView screener)
-          const tv = data.tvData
-          if (tv?.pmHigh && tv?.pmLow) {
-            setFib(calculateFibLevels(tv.pmHigh, tv.pmLow))
-          } else {
-            setFib(null)
-          }
-        }
+    setAbLoading(true)
+    setAbError(null)
+    setAbSignal(null)
+    fetchAmericanBullsSignal(symbol)
+      .then(({ signal }) => {
+        if (!cancelled) { setAbSignal(signal); setAbLoading(false) }
       })
-      .catch(() => {
-        if (cancelled) return
-        const fallback = extractPreMarketHLFromQuote(quote)
-        if (fallback) {
-          setFib(calculateFibLevels(fallback.high, fallback.low))
-        } else {
-          const tv = data.tvData
-          setFib(tv?.pmHigh && tv?.pmLow ? calculateFibLevels(tv.pmHigh, tv.pmLow) : null)
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setFibLoading(false)
+      .catch(err => {
+        if (!cancelled) { setAbError(err.message); setAbLoading(false) }
       })
     return () => { cancelled = true }
-  }, [symbol, quote, data.tvData])
+  }, [symbol])
 
-  // Refresh full data in background
+  // Refresh full data in background — preserve tvData + mode so Fibonacci anchors survive
   useEffect(() => {
     fetchFullAnalysis(symbol).then(raw => {
-      const filterResult = runAllFilters(raw)
+      const filterResult = runAllFilters(raw, mode)
       const newsClassified = classifyNewsList(raw.news || [])
-      setData({ ...raw, filterResult, newsClassified })
+      setData(prev => ({ ...raw, filterResult, newsClassified, tvData: prev.tvData, mode: prev.mode }))
     }).catch(() => {})
   }, [symbol])
 
@@ -101,9 +96,27 @@ export function DetailScreen({ stockData: initialData, onBack }) {
   const hasAvoidNews = newsClassified.some(n => n.classification === 'AVOID')
   const avoidNewsItems = newsClassified.filter(n => n.classification === 'AVOID')
 
+  // Derive live F11 (AmericanBulls) and merge into filter list
+  const liveF11 = filterAmericanBulls(abLoading ? null : true, abSignal)
+  const liveFilters = filterResult
+    ? { ...filterResult.filters, americanBulls: liveF11 }
+    : null
+  const liveHardFails = liveFilters
+    ? Object.values(liveFilters).filter(f => f.pass === false).length
+    : (filterResult?.hardFails ?? 0)
+  const liveScore = liveFilters ? computeScore(liveFilters, quote, mode) : (filterResult?.score ?? 0)
+
+  function abSignalColor(sig) {
+    if (!sig) return '#64748b'
+    if (sig === 'STRONG SELL') return '#ef4444'
+    if (sig === 'SELL') return '#f59e0b'   // amber — caution, not hard stop
+    if (sig === 'STRONG BUY' || sig === 'BUY' || sig === 'STAY LONG') return '#22c55e'
+    return '#f59e0b'
+  }
+
   const tabs = [
     { id: 'plan', label: 'Trade Plan' },
-    { id: 'filters', label: `Filters (${filterResult?.hardFails ?? 0} fail)` },
+    { id: 'filters', label: `Filters (${liveHardFails} fail)` },
     { id: 'news', label: `News (${newsClassified.length})` },
   ]
 
@@ -114,15 +127,19 @@ export function DetailScreen({ stockData: initialData, onBack }) {
 
   function handleCopyPlan() {
     if (!fib) return
+    const strategyLabel = { gap_down: 'Gap-Down Reversal', earnings_down: 'Earnings Gap Recovery', gap_up: 'Gap-Up Momentum' }[mode] || 'Trade Plan'
+    const entryFib = isGapUp ? '0.618' : '0.236'
+    const stopDesc = isGapUp ? 'Fib 0.382' : 'PM Low − 1%'
     const lines = [
-      `${symbol} — Gap-Reversal Trade Plan`,
-      `Entry:    $${fib.entryPrice}  (0.382 Fib)`,
-      `Stop:     $${fib.stopLoss}  (PM Low − 1.5%)`,
-      `Target 1: $${fib.target1}  (0.5 Fib)`,
-      `Target 2: $${fib.target2}  (0.618 Fib)`,
-      `Target 3: $${fib.target3}  (0.786 Fib)`,
-      fib.riskReward ? `R/R:      ${fib.riskReward}x` : '',
-      `PM Range: $${fib.preMarketLow} – $${fib.preMarketHigh}`,
+      `${symbol} — ${strategyLabel}`,
+      fib.entryPrice ? `Entry:    $${fib.entryPrice}  (Fib ${entryFib})` : '',
+      fib.stopLoss   ? `Stop:     $${fib.stopLoss}  (${stopDesc})` : '',
+      fib.target1    ? `Target 1: $${fib.target1}` : '',
+      fib.target2    ? `Target 2: $${fib.target2}` : '',
+      fib.riskReward ? `R/R:      1:${fib.riskReward}` : '',
+      isGapUp
+        ? `Gap: $${fib.preMarketLow} (Prev Close) → $${fib.preMarketHigh} (PM High)`
+        : `Gap: $${fib.preMarketLow} (PM Low) → $${fib.preMarketHigh} (Prev Close)`,
       `Rule: Wait for first green 1-min candle after 9:30 AM ET`,
     ].filter(Boolean).join('\n')
 
@@ -133,6 +150,7 @@ export function DetailScreen({ stockData: initialData, onBack }) {
   }
 
   return (
+    <>
     <div className="min-h-screen" style={{ background: '#0f0f0f' }}>
       <Header
         onBack={onBack}
@@ -182,7 +200,7 @@ export function DetailScreen({ stockData: initialData, onBack }) {
                     />
                   </svg>
                 </button>
-                {filterResult && <StatusBadge status={filterResult.status} />}
+                {filterResult && <StatusBadge status={filterResult.status} score={liveScore} />}
               </div>
             </div>
 
@@ -283,7 +301,7 @@ export function DetailScreen({ stockData: initialData, onBack }) {
               {/* Fibonacci levels */}
               <Section
                 title="Fibonacci Levels"
-                subtitle="Pre-market range"
+                subtitle={isGapUp ? 'Prev Close → PM High + extensions' : 'PM Low → Prev Close (gap-fill targets)'}
                 action={fib && (
                   <button
                     onClick={handleCopyPlan}
@@ -304,67 +322,93 @@ export function DetailScreen({ stockData: initialData, onBack }) {
                   </button>
                 )}
               >
-                {fibLoading ? (
-                  <div className="py-6 flex items-center justify-center gap-2" style={{ color: '#64748b' }}>
-                    <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
-                      <circle cx="12" cy="12" r="10" stroke="#2a2a2a" strokeWidth="2"/>
-                      <path d="M12 2a10 10 0 010 20" stroke="#22c55e" strokeWidth="2" strokeLinecap="round"/>
-                    </svg>
-                    <span className="text-sm">Loading candles...</span>
-                  </div>
-                ) : (
-                  <FibTable fib={fib} currentPrice={price} />
-                )}
+                <FibTable fib={fib} currentPrice={price} mode={mode} />
               </Section>
 
               {/* Trade plan */}
-              {fib && <TradePlan fib={fib} />}
+              {fib && <TradePlan fib={fib} mode={mode} />}
+
+              {/* Buy Demo button */}
+              {fib && fib.entryPrice && (
+                <button
+                  onClick={() => setShowBuyModal(true)}
+                  className="w-full py-4 rounded-2xl font-bold text-base flex items-center justify-center gap-2"
+                  style={{
+                    background: 'linear-gradient(135deg, #4f6ef7 0%, #7c3aed 100%)',
+                    color: '#fff',
+                    boxShadow: '0 0 24px rgba(79,110,247,0.3)',
+                  }}
+                >
+                  <span>💼</span>
+                  Buy Demo — ${fib.entryPrice.toFixed(2)}
+                </button>
+              )}
 
               {/* AmericanBulls */}
               <div
                 className="rounded-xl border p-4"
                 style={{ background: '#1a1a1a', borderColor: '#2a2a2a' }}
               >
-                <div className="text-sm font-bold mb-2" style={{ color: '#f1f5f9', letterSpacing: '0.06em' }}>
-                  AMERICANBULLS CHECK
+                <div className="text-sm font-bold mb-3" style={{ color: '#f1f5f9', letterSpacing: '0.06em' }}>
+                  AMERICANBULLS SIGNAL
                 </div>
-                <p className="text-sm mb-3" style={{ color: '#64748b' }}>
-                  Verify the signal at AmericanBulls.com before entering.
-                  If signal is SELL or STRONG SELL — skip this trade.
-                </p>
+                {abLoading ? (
+                  <div className="flex items-center gap-2 mb-3" style={{ color: '#64748b' }}>
+                    <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                      <circle cx="12" cy="12" r="10" stroke="#2a2a2a" strokeWidth="2"/>
+                      <path d="M12 2a10 10 0 010 20" stroke="#22c55e" strokeWidth="2" strokeLinecap="round"/>
+                    </svg>
+                    <span className="text-sm">Fetching signal...</span>
+                  </div>
+                ) : abSignal ? (
+                  <div className="flex items-center gap-3 mb-3">
+                    <span
+                      className="text-sm font-bold px-3 py-1.5 rounded-lg"
+                      style={{
+                        background: `${abSignalColor(abSignal)}22`,
+                        color: abSignalColor(abSignal),
+                        border: `1px solid ${abSignalColor(abSignal)}44`,
+                      }}
+                    >
+                      {abSignal}
+                    </span>
+                    {abSignal === 'STRONG SELL' && (
+                      <span className="text-sm font-semibold" style={{ color: '#ef4444' }}>
+                        AVOID — do not enter
+                      </span>
+                    )}
+                    {abSignal === 'SELL' && (
+                      <span className="text-sm font-semibold" style={{ color: '#f59e0b' }}>
+                        Caution — monitor closely
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-sm mb-3" style={{ color: abError ? '#ef4444' : '#64748b' }}>
+                    {abError ? `Fetch error — check manually` : 'Signal not found — check manually'}
+                  </p>
+                )}
                 <a
-                  href={`https://americanbulls.com/SignalPage.aspx?lang=en&Ticker=${symbol}`}
+                  href={`https://www.americanbulls.com/SignalPage.aspx?lang=en&Ticker=${symbol}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 text-sm font-semibold py-2.5 px-4 rounded-lg mb-3"
-                  style={{ background: '#222', color: '#22c55e', border: '1px solid #2a2a2a' }}
+                  className="inline-flex items-center gap-2 text-xs font-medium py-2 px-3 rounded-lg"
+                  style={{ background: '#222', color: '#64748b', border: '1px solid #2a2a2a' }}
                 >
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
                     <path d="M11.5 2.5H8M11.5 2.5V6M11.5 2.5L6 8M5 3H2.5C2.224 3 2 3.224 2 3.5v8c0 .276.224.5.5.5h8c.276 0 .5-.224.5-.5V9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                   Open AmericanBulls — {symbol}
                 </a>
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={americanBullsChecked}
-                    onChange={e => setAmericanBullsChecked(e.target.checked)}
-                    className="w-5 h-5 rounded"
-                    style={{ accentColor: '#22c55e' }}
-                  />
-                  <span className="text-sm" style={{ color: '#94a3b8' }}>
-                    I checked AmericanBulls — signal is not SELL / STRONG SELL
-                  </span>
-                </label>
               </div>
             </div>
           )}
 
           {/* Filters tab */}
           {activeTab === 'filters' && (
-            <Section title="All Filters" subtitle="All 10 must pass for GREEN status">
-              {filterResult ? (
-                <FilterList filters={filterResult.filters} />
+            <Section title="All Filters" subtitle="All 12 filters must pass for GREEN status">
+              {liveFilters ? (
+                <FilterList filters={liveFilters} mode={mode} />
               ) : (
                 <SkeletonDetail />
               )}
@@ -380,6 +424,16 @@ export function DetailScreen({ stockData: initialData, onBack }) {
         </div>
       </div>
     </div>
+
+    {showBuyModal && fib && (
+      <BuyModal
+        stockData={data}
+        fib={fib}
+        onClose={() => setShowBuyModal(false)}
+        onBought={() => setShowBuyModal(false)}
+      />
+    )}
+    </>
   )
 }
 

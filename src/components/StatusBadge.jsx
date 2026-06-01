@@ -1,25 +1,9 @@
-export function StatusBadge({ status, size = 'md' }) {
+export function StatusBadge({ status, score, size = 'md' }) {
   const configs = {
-    GREEN: {
-      label: 'ALL PASS',
-      bg: 'rgba(34,197,94,0.12)',
-      border: 'rgba(34,197,94,0.35)',
-      color: '#22c55e',
-    },
-    AMBER: {
-      label: 'WARNINGS',
-      bg: 'rgba(245,158,11,0.12)',
-      border: 'rgba(245,158,11,0.35)',
-      color: '#f59e0b',
-    },
-    RED: {
-      label: 'AVOID',
-      bg: 'rgba(239,68,68,0.12)',
-      border: 'rgba(239,68,68,0.35)',
-      color: '#ef4444',
-    },
+    GREEN: { color: '#22c55e', bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.35)' },
+    AMBER: { color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.35)' },
+    RED:   { color: '#ef4444', bg: 'rgba(239,68,68,0.12)', border: 'rgba(239,68,68,0.35)' },
   }
-
   const cfg = configs[status] || configs.AMBER
   const textSize = size === 'sm' ? '10px' : '11px'
   const px = size === 'sm' ? '6px' : '8px'
@@ -27,17 +11,26 @@ export function StatusBadge({ status, size = 'md' }) {
 
   return (
     <span
-      className="inline-flex items-center font-bold rounded border"
+      className="inline-flex items-center gap-1 font-bold rounded border"
       style={{
         fontSize: textSize,
-        letterSpacing: '0.08em',
+        letterSpacing: '0.06em',
         padding: `${py} ${px}`,
         background: cfg.bg,
         borderColor: cfg.border,
         color: cfg.color,
       }}
     >
-      {cfg.label}
+      {score != null && score > 0 ? (
+        <>
+          <span className="font-mono tabular-nums" style={{ fontSize: size === 'sm' ? '10px' : '12px' }}>
+            {score}
+          </span>
+          <span style={{ opacity: 0.6, fontSize: '8px' }}>/100</span>
+        </>
+      ) : (
+        { GREEN: 'ALL PASS', AMBER: 'WARNINGS', RED: 'AVOID' }[status] ?? 'AMBER'
+      )}
     </span>
   )
 }

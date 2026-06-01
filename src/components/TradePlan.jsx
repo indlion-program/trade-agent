@@ -1,11 +1,18 @@
-export function TradePlan({ fib }) {
+export function TradePlan({ fib, mode = 'gap_down' }) {
   if (!fib || !fib.entryPrice) return null
 
-  const rows = [
-    { label: 'Entry Zone', sub: 'Fib 0.382 — after first green candle', value: `$${fib.entryPrice.toFixed(2)}`, color: '#22c55e' },
-    { label: 'Stop Loss', sub: 'Pre-market low − 1.5% — hard stop', value: `$${fib.stopLoss.toFixed(2)}`, color: '#ef4444' },
-    { label: 'Target 1', sub: 'Fib 0.618 — partial exit (50%)', value: fib.target2 ? `$${fib.target2.toFixed(2)}` : '—', color: '#22c55e' },
-    { label: 'Target 2', sub: 'Fib 0.786 — trailing remainder', value: fib.target3 ? `$${fib.target3.toFixed(2)}` : '—', color: '#22c55e' },
+  const isUp = mode === 'gap_up'
+
+  const rows = isUp ? [
+    { label: 'Entry Zone',  sub: 'Fib 0.618 — pullback to gap-hold zone', value: fib.entryPrice ? `$${fib.entryPrice.toFixed(2)}` : '—', color: '#22c55e' },
+    { label: 'Stop Loss',   sub: 'Below Fib 0.382 — gap failing',          value: fib.stopLoss   ? `$${fib.stopLoss.toFixed(2)}`   : '—', color: '#ef4444' },
+    { label: 'Target 1',   sub: 'Ext 1.272 — partial exit (50%)',          value: fib.target1    ? `$${fib.target1.toFixed(2)}`    : '—', color: '#22c55e' },
+    { label: 'Target 2',   sub: 'Ext 1.618 — trailing remainder',          value: fib.target2    ? `$${fib.target2.toFixed(2)}`    : '—', color: '#22c55e' },
+  ] : [
+    { label: 'Entry Zone',  sub: 'Fib 0.236 — first green candle above PM Low', value: fib.entryPrice ? `$${fib.entryPrice.toFixed(2)}` : '—', color: '#22c55e' },
+    { label: 'Stop Loss',   sub: 'PM Low − 1% — hard stop',                      value: fib.stopLoss   ? `$${fib.stopLoss.toFixed(2)}`   : '—', color: '#ef4444' },
+    { label: 'Target 1',   sub: 'Fib 0.382 — partial exit (50%)',                value: fib.target1    ? `$${fib.target1.toFixed(2)}`    : '—', color: '#22c55e' },
+    { label: 'Target 2',   sub: 'Fib 0.618 — main target',                       value: fib.target2    ? `$${fib.target2.toFixed(2)}`    : '—', color: '#22c55e' },
   ]
 
   return (
@@ -15,10 +22,7 @@ export function TradePlan({ fib }) {
           TRADE PLAN
         </span>
         {fib.riskReward !== null && (
-          <span
-            className="text-sm font-bold"
-            style={{ color: fib.rrValid ? '#22c55e' : '#ef4444' }}
-          >
+          <span className="text-sm font-bold" style={{ color: fib.rrValid ? '#22c55e' : '#ef4444' }}>
             R/R 1:{fib.riskReward.toFixed(1)}
           </span>
         )}
@@ -39,7 +43,6 @@ export function TradePlan({ fib }) {
         </div>
       ))}
 
-      {/* Entry timing reminder */}
       <div className="px-4 py-3 border-t" style={{ borderColor: '#2a2a2a', background: 'rgba(245,158,11,0.05)' }}>
         <div className="flex items-start gap-2">
           <span style={{ color: '#f59e0b', fontSize: '16px' }}>⏱</span>

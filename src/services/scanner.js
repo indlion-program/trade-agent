@@ -1,39 +1,37 @@
 // Two-pass scanner.
 //
 // PASS 1 — TradingView screener (preferred):
-//   Single POST returns all gap-down candidates. ~1-2 seconds, no Finnhub calls.
+//   Single POST returns all gap candidates for the chosen strategy mode.
 //   Falls back to Finnhub /quote per symbol if TV screener unavailable.
 //
 // PASS 2 — Finnhub full analysis (5 calls per candidate):
-//   profile, metrics, news, earnings, splits → run all 10 filters.
+//   profile, metrics, news, earnings, splits → run all filters.
 
 import { getQuote, fetchFullAnalysis, getUsSymbols } from './finnhub'
 import { tvPreScreen } from './tradingview'
-import { runAllFilters } from '../utils/filters'
+import { runAllFilters, STRATEGY_CONFIG } from '../utils/filters'
 import { classifyNewsList } from '../utils/newsClassifier'
 import { filterTradeableSymbols } from '../data/universe'
 
-// Pre-screen thresholds — must match TradingView screener filter in tradingview.js
-const PRESCREEN = {
-  minDrop: -5.0,
-  minPrice: 3.0,
-  minVol: 50_000,
-}
-
-function quotePassesPrescreen(quote) {
+function quotePassesPrescreen(quote, mode = 'gap_down') {
   if (!quote) return false
+  const cfg = STRATEGY_CONFIG[mode] ?? STRATEGY_CONFIG.gap_down
   const { dp, c, v } = quote
-  if (dp === null || dp === undefined) return false
-  if (c === null || c === undefined) return false
-  if (dp > PRESCREEN.minDrop) return false
-  if (c <= PRESCREEN.minPrice) return false
-  if (v !== null && v !== undefined && v < PRESCREEN.minVol) return false
+  if (dp == null || c == null) return false
+  if (cfg.minGain !== null) {
+    if (dp < cfg.minGain) return false
+  } else {
+    if (dp > cfg.minDrop) return false
+    if (cfg.maxDrop !== null && dp < cfg.maxDrop) return false
+  }
+  if (c < cfg.minPrice) return false
+  if (v != null && v < cfg.minPmVol * 0.8) return false
   return true
 }
 
 export function createScanner() {
   let state = {
-    phase: 'idle', // idle | tv_scan | pass1 | pass2 | done | cancelled
+    phase: 'idle',
     total: 0,
     pass1Done: 0,
     pass1Errors: 0,
@@ -44,13 +42,14 @@ export function createScanner() {
     finishedAt: null,
     cancelled: false,
     error: null,
-    tvMode: false, // true when pass-1 was done via TradingView screener
+    tvMode: false,
+    mode: 'gap_down',
   }
 
   const listeners = new Set()
   function emit() {
-    const snapshot = { ...state, candidates: [...state.candidates], analyses: { ...state.analyses } }
-    for (const cb of listeners) cb(snapshot)
+    const snap = { ...state, candidates: [...state.candidates], analyses: { ...state.analyses } }
+    for (const cb of listeners) cb(snap)
   }
 
   function subscribe(cb) {
@@ -64,28 +63,25 @@ export function createScanner() {
     emit()
   }
 
-  // Pass 1A: Try TradingView screener (instant, one call)
-  async function pass1TV() {
+  async function pass1TV(mode, universeSymbols) {
     setState({ phase: 'tv_scan' })
-    const candidates = await tvPreScreen({
-      minDrop: PRESCREEN.minDrop,
-      minPrice: PRESCREEN.minPrice,
-      minPmVol: PRESCREEN.minVol,
-    })
-    // Normalize to the same shape scanner.js uses internally
-    state.candidates = candidates.map(({ symbol, quote, tvData }) => ({
-      symbol,
-      quote,
-      tvData,
-    }))
+    let candidates = await tvPreScreen(mode)
+
+    // If a specific universe is selected (not full US), post-filter to that universe.
+    // universeSymbols < 5000 distinguishes curated/tech/etc. from the full US list.
+    if (universeSymbols && universeSymbols.length > 0 && universeSymbols.length < 5000) {
+      const set = new Set(universeSymbols)
+      candidates = candidates.filter(c => set.has(c.symbol))
+    }
+
+    state.candidates = candidates.map(({ symbol, quote, tvData }) => ({ symbol, quote, tvData }))
     state.pass1Done = candidates.length
     state.total = candidates.length
     state.tvMode = true
     emit()
   }
 
-  // Pass 1B: Finnhub quote per symbol (fallback)
-  async function pass1Finnhub(symbols, { concurrency = 6 } = {}) {
+  async function pass1Finnhub(symbols, mode, { concurrency = 6 } = {}) {
     setState({ phase: 'pass1', total: symbols.length })
     let idx = 0
     async function worker() {
@@ -95,7 +91,7 @@ export function createScanner() {
         try {
           const quote = await getQuote(sym)
           if (state.cancelled) return
-          if (quotePassesPrescreen(quote)) {
+          if (quotePassesPrescreen(quote, mode)) {
             state.candidates.push({ symbol: sym, quote })
           }
         } catch {
@@ -105,77 +101,70 @@ export function createScanner() {
         if (state.pass1Done % 5 === 0) emit()
       }
     }
-    const workers = Array.from({ length: concurrency }, worker)
-    await Promise.all(workers)
+    await Promise.all(Array.from({ length: concurrency }, worker))
     emit()
   }
 
-  async function pass2({ concurrency = 4 } = {}) {
-    const queue = [...state.candidates].sort((a, b) => (a.quote?.dp ?? 0) - (b.quote?.dp ?? 0))
+  async function pass2(mode, { concurrency = 4 } = {}) {
+    const isUp = mode === 'gap_up'
+    const queue = [...state.candidates].sort((a, b) =>
+      isUp
+        ? (b.quote?.dp ?? 0) - (a.quote?.dp ?? 0)   // gap-up: biggest gains first
+        : (a.quote?.dp ?? 0) - (b.quote?.dp ?? 0)    // gap-down: biggest drops first
+    )
     let idx = 0
     async function worker() {
       while (idx < queue.length && !state.cancelled) {
         const i = idx++
-        const { symbol, quote } = queue[i]
+        const { symbol, quote, tvData } = queue[i]
         try {
           const raw = await fetchFullAnalysis(symbol, quote)
           if (state.cancelled) return
-          const filterResult = runAllFilters(raw)
+          const filterResult = runAllFilters(raw, mode)
           const newsClassified = classifyNewsList(raw.news || [])
-          state.analyses[symbol] = { ...raw, filterResult, newsClassified }
+          state.analyses[symbol] = { ...raw, tvData, filterResult, newsClassified, mode }
         } catch (e) {
           state.analyses[symbol] = {
-            symbol,
-            quote,
+            symbol, quote, tvData,
             error: e.message,
-            filterResult: { status: 'AMBER', filters: {} },
+            filterResult: { status: 'AMBER', filters: {}, score: 0, mode },
             newsClassified: [],
+            mode,
           }
         }
         state.pass2Done++
         emit()
       }
     }
-    const workers = Array.from({ length: concurrency }, worker)
-    await Promise.all(workers)
+    await Promise.all(Array.from({ length: concurrency }, worker))
     emit()
   }
 
-  async function scan(symbols, { pass2: runPass2 = true, forceFinnhub = false } = {}) {
+  async function scan(symbols, { pass2: runPass2 = true, forceFinnhub = false, mode = 'gap_down' } = {}) {
     if (state.phase !== 'idle' && state.phase !== 'done' && state.phase !== 'cancelled') {
       throw new Error('Scan already running')
     }
     state = {
-      phase: 'tv_scan',
-      total: 0,
-      pass1Done: 0,
-      pass1Errors: 0,
-      candidates: [],
-      analyses: {},
-      pass2Done: 0,
-      startedAt: Date.now(),
-      finishedAt: null,
-      cancelled: false,
-      error: null,
-      tvMode: false,
+      phase: 'tv_scan', total: 0, pass1Done: 0, pass1Errors: 0,
+      candidates: [], analyses: {}, pass2Done: 0,
+      startedAt: Date.now(), finishedAt: null,
+      cancelled: false, error: null, tvMode: false, mode,
     }
     emit()
 
     try {
-      // Try TradingView screener first (instant scan, no Finnhub quota used)
       if (!forceFinnhub) {
         try {
-          await pass1TV()
+          await pass1TV(mode, symbols)
         } catch (tvErr) {
-          // TV screener failed → fall back to Finnhub pass 1
           console.warn('TV screener unavailable, falling back to Finnhub:', tvErr.message)
           state.candidates = []
           state.tvMode = false
-          await pass1Finnhub(symbols)
+          await pass1Finnhub(symbols, mode)
         }
       } else {
         state.tvMode = false
-        await pass1Finnhub(symbols)
+        await pass1Finnhub(symbols, mode)
       }
 
       if (state.cancelled) {
@@ -185,24 +174,21 @@ export function createScanner() {
 
       if (runPass2 && state.candidates.length > 0) {
         setState({ phase: 'pass2' })
-        await pass2()
+        await pass2(mode)
       }
 
-      setState({
-        phase: state.cancelled ? 'cancelled' : 'done',
-        finishedAt: Date.now(),
-      })
+      setState({ phase: state.cancelled ? 'cancelled' : 'done', finishedAt: Date.now() })
     } catch (e) {
       setState({ phase: 'done', error: e.message, finishedAt: Date.now() })
     }
   }
 
-  async function refreshAnalysis(symbol, quote) {
+  async function refreshAnalysis(symbol, quote, mode = 'gap_down') {
     try {
       const raw = await fetchFullAnalysis(symbol, quote)
-      const filterResult = runAllFilters(raw)
+      const filterResult = runAllFilters(raw, mode)
       const newsClassified = classifyNewsList(raw.news || [])
-      state.analyses[symbol] = { ...raw, filterResult, newsClassified }
+      state.analyses[symbol] = { ...raw, filterResult, newsClassified, mode }
       emit()
       return state.analyses[symbol]
     } catch {
@@ -217,18 +203,9 @@ export function createScanner() {
 
   function reset() {
     state = {
-      phase: 'idle',
-      total: 0,
-      pass1Done: 0,
-      pass1Errors: 0,
-      candidates: [],
-      analyses: {},
-      pass2Done: 0,
-      startedAt: null,
-      finishedAt: null,
-      cancelled: false,
-      error: null,
-      tvMode: false,
+      phase: 'idle', total: 0, pass1Done: 0, pass1Errors: 0,
+      candidates: [], analyses: {}, pass2Done: 0,
+      startedAt: null, finishedAt: null, cancelled: false, error: null, tvMode: false, mode: 'gap_down',
     }
     emit()
   }
