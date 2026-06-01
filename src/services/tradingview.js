@@ -4,7 +4,29 @@
 // In dev: calls /api/screener (Vercel proxy dev server via vite proxy)
 // In prod: calls /api/screener (Vercel edge function)
 
-const SCREENER_URL = '/api/screener'
+const TV_DIRECT = 'https://scanner.tradingview.com/america/scan'
+const TV_PROXY = '/api/screener'
+
+// Try direct TV endpoint first (works on GitHub Pages if CORS allows).
+// Falls back to /api/screener proxy (works on Vercel + local dev).
+// If both fail, throws → scanner.js catches and switches to Finnhub pass-1.
+async function postScreener(body) {
+  try {
+    const r = await fetch(TV_DIRECT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (r.ok) return r.json()
+  } catch {}
+  const r2 = await fetch(TV_PROXY, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!r2.ok) throw new Error(`TV screener HTTP ${r2.status}`)
+  return r2.json()
+}
 
 // Column index map — must match the `columns` array in buildRequest()
 const COL = {
@@ -65,14 +87,7 @@ function buildRequest({ minDrop = -5.0, minPrice = 3.0, minPmVol = 50000, limit 
 export async function tvPreScreen({ minDrop = -5.0, minPrice = 3.0, minPmVol = 50000 } = {}) {
   const body = buildRequest({ minDrop, minPrice, minPmVol })
 
-  const res = await fetch(SCREENER_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-
-  if (!res.ok) throw new Error(`TV screener HTTP ${res.status}`)
-  const json = await res.json()
+  const json = await postScreener(body)
   if (!json.data) throw new Error('TV screener: unexpected response format')
 
   return json.data.map((item) => {
