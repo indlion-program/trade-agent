@@ -171,6 +171,49 @@ export async function getPreMarketCandles(symbol) {
   return getCandles(symbol, 1, from, to)
 }
 
+// ─── Light analysis (TV mode) — 2 Finnhub calls per symbol ─────────────────
+// Used when tvData is available from the TradingView screener.
+// Skips quote/profile/metrics (all in tvData) and fetches only news + splits.
+// sharedEarnings is pre-fetched once for all candidates (0 extra calls).
+export async function fetchLightAnalysis(symbol, existingQuote, tvData, sharedEarnings = null) {
+  const yearAgoStr = new Date(Date.now() - 365 * 24 * 3600 * 1000).toISOString().slice(0, 10)
+  const todayStr = new Date().toISOString().slice(0, 10)
+
+  const [news, splits] = await Promise.allSettled([
+    getNews(symbol),
+    getSplits(symbol, yearAgoStr, todayStr),
+  ])
+
+  // Build Finnhub-compatible profile/metrics from tvData.
+  // filterDailyVolume, filterMarketCap, filterPMVolumeRatio, filterPE all read
+  // these fields — keeping the same shape means no filter code changes needed.
+  const profile = tvData ? {
+    marketCapitalization: tvData.marketCap != null ? tvData.marketCap / 1_000_000 : null,
+    finnhubIndustry: tvData.sector || '',
+    exchange: tvData.exchange || '',
+    name: tvData.name || symbol,
+  } : null
+
+  const metrics = tvData ? {
+    metric: {
+      peBasicExclExtraTTM: tvData.pe ?? null,
+      peTTM: tvData.pe ?? null,
+      '10DayAverageTradingVolume': tvData.avgVol10d != null ? tvData.avgVol10d / 1_000_000 : null,
+    },
+  } : null
+
+  return {
+    symbol,
+    quote: existingQuote,
+    profile,
+    metrics,
+    news: news.status === 'fulfilled' ? news.value : [],
+    earnings: sharedEarnings,
+    splits: splits.status === 'fulfilled' ? splits.value : [],
+    tvData,
+  }
+}
+
 // ─── Full analysis (pass 2) — 5 API calls per symbol ───────────────────────
 export async function fetchFullAnalysis(symbol, existingQuote = null) {
   const todayStr = new Date().toISOString().slice(0, 10)

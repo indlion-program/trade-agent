@@ -1,13 +1,14 @@
 // Two-pass scanner.
 //
-// PASS 1 — TradingView screener (preferred):
-//   Single POST returns all gap candidates for the chosen strategy mode.
+// PASS 1 — TradingView screener (preferred, no Finnhub calls):
+//   Single POST returns candidates for the chosen strategy mode.
 //   Falls back to Finnhub /quote per symbol if TV screener unavailable.
 //
-// PASS 2 — Finnhub full analysis (5 calls per candidate):
-//   profile, metrics, news, earnings, splits → run all filters.
+// PASS 2 — TV mode: 2 Finnhub calls per candidate (news + splits).
+//          Finnhub fallback: 5 calls per candidate (full analysis).
+//   Earnings calendar fetched once and shared across all candidates.
 
-import { getQuote, fetchFullAnalysis, getUsSymbols } from './finnhub'
+import { getQuote, fetchFullAnalysis, fetchLightAnalysis, getEarnings, getUsSymbols } from './finnhub'
 import { tvPreScreen } from './tradingview'
 import { runAllFilters, STRATEGY_CONFIG } from '../utils/filters'
 import { classifyNewsList } from '../utils/newsClassifier'
@@ -105,10 +106,17 @@ export function createScanner() {
     emit()
   }
 
-  async function pass2(mode, { concurrency = 4, maxCandidates = 25 } = {}) {
+  async function pass2(mode, { concurrency = 4, maxCandidates = 50 } = {}) {
     const isUp = mode === 'gap_up'
-    // Sort by biggest gap, then cap at maxCandidates to keep Finnhub calls manageable.
-    // At 55 calls/min and 5 calls/stock: 25 stocks ≈ 2-3 minutes max.
+
+    // TV mode: fetch earnings once (1 call total) and share across all candidates.
+    // Finnhub fallback: each fetchFullAnalysis fetches its own earnings.
+    const todayStr = new Date().toISOString().slice(0, 10)
+    let sharedEarnings = null
+    if (state.tvMode) {
+      try { sharedEarnings = await getEarnings(todayStr, todayStr) } catch {}
+    }
+
     const queue = [...state.candidates]
       .sort((a, b) =>
         isUp
@@ -122,7 +130,14 @@ export function createScanner() {
         const i = idx++
         const { symbol, quote, tvData } = queue[i]
         try {
-          const raw = await fetchFullAnalysis(symbol, quote)
+          let raw
+          if (tvData) {
+            // TV mode: 2 Finnhub calls (news + splits). Profile/metrics come from tvData.
+            raw = await fetchLightAnalysis(symbol, quote, tvData, sharedEarnings)
+          } else {
+            // Finnhub fallback: 5 calls (quote, profile, metrics, news, splits)
+            raw = await fetchFullAnalysis(symbol, quote)
+          }
           if (state.cancelled) return
           const filterResult = runAllFilters(raw, mode)
           const newsClassified = classifyNewsList(raw.news || [])

@@ -46,6 +46,7 @@ const COL = {
   pmHigh:      11,
   pmLow:       12,
   pmVolume:    13,
+  pe:          14,  // P/E TTM — eliminates the Finnhub /stock/metric call
 }
 
 const COLUMNS = [
@@ -53,6 +54,7 @@ const COLUMNS = [
   'sector', 'exchange', 'description', 'average_volume_10d_calc',
   'premarket_change', 'premarket_close', 'premarket_high',
   'premarket_low', 'premarket_volume',
+  'price_earnings_ttm',
 ]
 
 function buildRequest(mode = 'gap_down', limit = 500) {
@@ -124,10 +126,15 @@ export async function tvPreScreen(mode = 'gap_down') {
       tvData: {
         marketCap: d[COL.marketCap],
         avgVol10d: d[COL.avgVol10d],
+        pe:        d[COL.pe],
         pmHigh:    d[COL.pmHigh],
         pmLow:     d[COL.pmLow],
         pmVolume:  d[COL.pmVolume],
         prevClose,
+        // Also store display fields so fetchLightAnalysis can build profile without Finnhub
+        sector:    d[COL.sector] || '',
+        exchange:  d[COL.exchange] || '',
+        name:      d[COL.description] || symbol,
       },
     }
   })
