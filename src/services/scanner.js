@@ -14,6 +14,27 @@ import { runAllFilters, STRATEGY_CONFIG } from '../utils/filters'
 import { classifyNewsList } from '../utils/newsClassifier'
 import { filterTradeableSymbols } from '../data/universe'
 
+// Build Finnhub-compatible profile/metrics objects from TV screener data.
+// Used both for immediate preliminary results and as the base for light analysis.
+function tvDataToAnalysis(symbol, quote, tvData, mode, preliminary = false) {
+  const profile = {
+    marketCapitalization: tvData?.marketCap != null ? tvData.marketCap / 1_000_000 : null,
+    finnhubIndustry: tvData?.sector || '',
+    exchange: tvData?.exchange || '',
+    name: tvData?.name || symbol,
+  }
+  const metrics = {
+    metric: {
+      peBasicExclExtraTTM: tvData?.pe ?? null,
+      peTTM: tvData?.pe ?? null,
+      '10DayAverageTradingVolume': tvData?.avgVol10d != null ? tvData.avgVol10d / 1_000_000 : null,
+    },
+  }
+  const raw = { symbol, quote, profile, metrics, news: [], earnings: null, splits: [], tvData }
+  const filterResult = runAllFilters(raw, mode)
+  return { ...raw, filterResult, newsClassified: [], mode, preliminary }
+}
+
 function quotePassesPrescreen(quote, mode = 'gap_down') {
   if (!quote) return false
   const cfg = STRATEGY_CONFIG[mode] ?? STRATEGY_CONFIG.gap_down
@@ -79,6 +100,12 @@ export function createScanner() {
     state.pass1Done = candidates.length
     state.total = candidates.length
     state.tvMode = true
+
+    // Show preliminary results immediately using TV data — list appears in ~2s.
+    // Pass-2 will overwrite each entry with full news/splits enrichment.
+    for (const { symbol, quote, tvData } of state.candidates) {
+      state.analyses[symbol] = tvDataToAnalysis(symbol, quote, tvData, mode, true)
+    }
     emit()
   }
 
@@ -106,11 +133,10 @@ export function createScanner() {
     emit()
   }
 
-  async function pass2(mode, { concurrency = 4, maxCandidates = 50 } = {}) {
+  async function pass2(mode, { concurrency = 8, maxCandidates = 200 } = {}) {
     const isUp = mode === 'gap_up'
 
-    // TV mode: fetch earnings once (1 call total) and share across all candidates.
-    // Finnhub fallback: each fetchFullAnalysis fetches its own earnings.
+    // TV mode: fetch earnings once (1 call total) shared across all candidates.
     const todayStr = new Date().toISOString().slice(0, 10)
     let sharedEarnings = null
     if (state.tvMode) {
@@ -132,23 +158,33 @@ export function createScanner() {
         try {
           let raw
           if (tvData) {
-            // TV mode: 2 Finnhub calls (news + splits). Profile/metrics come from tvData.
+            // TV mode: 2 Finnhub calls (news + splits). Profile/metrics from tvData.
             raw = await fetchLightAnalysis(symbol, quote, tvData, sharedEarnings)
           } else {
-            // Finnhub fallback: 5 calls (quote, profile, metrics, news, splits)
+            // Finnhub fallback: 5 calls per stock
             raw = await fetchFullAnalysis(symbol, quote)
           }
           if (state.cancelled) return
           const filterResult = runAllFilters(raw, mode)
           const newsClassified = classifyNewsList(raw.news || [])
-          state.analyses[symbol] = { ...raw, tvData, filterResult, newsClassified, mode }
+          state.analyses[symbol] = { ...raw, tvData, filterResult, newsClassified, mode, preliminary: false }
         } catch (e) {
-          state.analyses[symbol] = {
-            symbol, quote, tvData,
-            error: e.message,
-            filterResult: { status: 'AMBER', filters: {}, score: 0, mode },
-            newsClassified: [],
-            mode,
+          // Finnhub failed: keep the TV-only preliminary result rather than showing an error.
+          // The stock is still visible with F1-F7 filter results from TV data.
+          if (tvData && state.analyses[symbol]?.preliminary) {
+            state.analyses[symbol] = {
+              ...state.analyses[symbol],
+              preliminary: false,
+              fetchError: e.message,
+            }
+          } else {
+            state.analyses[symbol] = {
+              symbol, quote, tvData,
+              error: e.message,
+              filterResult: { status: 'AMBER', filters: {}, score: 0, mode },
+              newsClassified: [],
+              mode,
+            }
           }
         }
         state.pass2Done++

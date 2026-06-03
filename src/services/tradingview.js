@@ -61,16 +61,17 @@ function buildRequest(mode = 'gap_down', limit = 500) {
   const cfg = STRATEGY_CONFIG[mode] ?? STRATEGY_CONFIG.gap_down
   const isUp = mode === 'gap_up'
 
-  // Pre-screen uses LOOSE thresholds to cast a wide net.
-  // The strict strategy thresholds (minDrop, minPrice, etc.) are enforced in pass-2.
+  // Server-side pre-filters match the strategy thresholds so very few stocks
+  // make it to pass-2, keeping the scan fast regardless of market activity.
   const filter = [
     isUp
-      ? { left: 'premarket_change', operation: 'greater', right: 4.5 }   // catch +5%+ gains
-      : { left: 'premarket_change', operation: 'less',    right: -4.5 },  // catch -5%+ drops
-    { left: 'close',              operation: 'greater',  right: 2 },          // > $2 (pass-2 enforces $8+)
-    { left: 'premarket_volume',   operation: 'greater',  right: 30_000 },      // > 30K (pass-2 enforces 100K+)
-    { left: 'exchange',           operation: 'in_range', right: ['NASDAQ', 'NYSE', 'AMEX'] },
-    { left: 'market_cap_basic',   operation: 'greater',  right: 100_000_000 }, // > $100M (pass-2 enforces $1B+)
+      ? { left: 'premarket_change', operation: 'greater', right: (cfg.minGain ?? 5) - 0.5 }
+      : { left: 'premarket_change', operation: 'less',    right: (cfg.minDrop ?? -5) + 0.5 },
+    { left: 'close',              operation: 'greater',  right: (cfg.minPrice ?? 5) - 1 },
+    { left: 'premarket_volume',   operation: 'greater',  right: cfg.minPmVol ?? 50_000 },
+    { left: 'exchange',           operation: 'in_range', right: ['NASDAQ', 'NYSE'] },
+    { left: 'market_cap_basic',   operation: 'greater',  right: (cfg.minMarketCap ?? 500_000_000) * 0.5 },
+    { left: 'average_volume_10d_calc', operation: 'greater', right: (cfg.minAvgVol ?? 750_000) * 0.7 },
   ]
 
   // Exclude climax selling for gap-down modes

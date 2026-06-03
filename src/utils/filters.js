@@ -8,14 +8,16 @@ function result(pass, value, reason) {
 export const STRATEGY_CONFIG = {
   gap_down: {
     label: 'Gap Down Reversal',
-    minDrop: -7,
-    maxDrop: -30,              // exclude climax selling
+    // Research: -5% to -20% fills ~60% by EOD on liquid mid/large caps.
+    // Beyond -20% is usually fundamental damage — skip.
+    minDrop: -5,
+    maxDrop: -20,
     minGain: null,
-    minPrice: 8,
-    minMarketCap: 1_000_000_000,
-    minAvgVol: 1_500_000,
-    minPmVol: 100_000,
-    minPmVolRatio: 0.15,
+    minPrice: 5,
+    minMarketCap: 500_000_000,  // $500M+ caps fill gaps more reliably
+    minAvgVol: 750_000,          // 750K avg vol = real institutional liquidity
+    minPmVol: 50_000,
+    minPmVolRatio: 0.10,         // 10% of avg daily vol = real pre-market interest
     requireEarnings: false,
   },
   earnings_down: {
