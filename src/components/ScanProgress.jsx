@@ -1,4 +1,13 @@
+import { useState, useEffect } from 'react'
+
 export function ScanProgress({ state, onCancel }) {
+  const [queued, setQueued] = useState(0)
+  useEffect(() => {
+    const h = (e) => setQueued(e.detail?.queued ?? 0)
+    window.addEventListener('apiCountUpdate', h)
+    return () => window.removeEventListener('apiCountUpdate', h)
+  }, [])
+
   const { phase, total, pass1Done, pass1Errors, candidates, pass2Done, startedAt, tvMode } = state
   if (phase === 'idle') return null
 
@@ -57,6 +66,16 @@ export function ScanProgress({ state, onCancel }) {
           </button>
         )}
       </div>
+
+      {/* Rate limit waiting banner */}
+      {isActive && queued > 0 && (
+        <div
+          className="text-xs px-2.5 py-1.5 rounded mt-2"
+          style={{ background: 'rgba(245,158,11,0.1)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.2)' }}
+        >
+          ⏳ API rate limit — {queued} call{queued !== 1 ? 's' : ''} waiting, resuming shortly...
+        </div>
+      )}
 
       {/* Pass 1 progress bar — hidden during tv_scan (instant) */}
       {phase !== 'tv_scan' && (

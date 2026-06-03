@@ -13,6 +13,7 @@ import { tvPreScreen } from './tradingview'
 import { runAllFilters, STRATEGY_CONFIG } from '../utils/filters'
 import { classifyNewsList } from '../utils/newsClassifier'
 import { filterTradeableSymbols } from '../data/universe'
+import { alertGreenStock } from './notify'
 
 // Build Finnhub-compatible profile/metrics objects from TV screener data.
 // Used both for immediate preliminary results and as the base for light analysis.
@@ -168,6 +169,9 @@ export function createScanner() {
           const filterResult = runAllFilters(raw, mode)
           const newsClassified = classifyNewsList(raw.news || [])
           state.analyses[symbol] = { ...raw, tvData, filterResult, newsClassified, mode, preliminary: false }
+          if (filterResult.status === 'GREEN') {
+            alertGreenStock(symbol, quote?.dp, null).catch(() => {})
+          }
         } catch (e) {
           // Finnhub failed: keep the TV-only preliminary result rather than showing an error.
           // The stock is still visible with F1-F7 filter results from TV data.

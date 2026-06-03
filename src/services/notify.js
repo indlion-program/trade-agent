@@ -3,6 +3,8 @@
 //   2. Browser Notification API (desktop + Android Chrome)
 //   3. ntfy.sh HTTP POST (iOS + Android via free ntfy app)
 
+const NTFY_TOPIC = 'trade-agent'
+
 // In-app toast callbacks — components register here
 const toastListeners = new Set()
 
@@ -15,7 +17,6 @@ function fireToast(title, body, type = 'info') {
   for (const cb of toastListeners) cb({ title, body, type })
 }
 
-// Browser Notification API
 async function browserNotify(title, body) {
   try {
     if (!('Notification' in window)) return
@@ -35,46 +36,86 @@ async function browserNotify(title, body) {
   }
 }
 
-// ntfy.sh — free push to phone
-async function ntfyNotify(topic, title, body, priority = 'default') {
-  if (!topic) return
+async function ntfyNotify(title, body, priority = 'default', tags = 'chart_with_upwards_trend') {
   try {
-    await fetch(`https://ntfy.sh/${encodeURIComponent(topic)}`, {
+    await fetch(`https://ntfy.sh/${NTFY_TOPIC}`, {
       method: 'POST',
       body,
       headers: {
         Title: title,
         Priority: priority,
-        Tags: priority === 'high' ? 'warning,chart_with_upwards_trend' : 'chart_with_upwards_trend',
+        Tags: tags,
       },
     })
   } catch {
-    // Network error — silently ignore (don't crash trade logic)
+    // Network error — silently ignore
   }
 }
 
-// ─── Main alert function ──────────────────────────────────────────────────────
-
-export async function sendTradeAlert({ title, body, type = 'info', topic = '' }) {
-  const priority = type === 'stop' ? 'high' : 'default'
+async function notify(title, body, { type = 'info', priority = 'default', tags = 'chart_with_upwards_trend' } = {}) {
   fireToast(title, body, type)
   await Promise.all([
     browserNotify(title, body),
-    ntfyNotify(topic, title, body, priority),
+    ntfyNotify(title, body, priority, tags),
   ])
 }
 
-// Test notification (from settings UI)
-export async function sendTestAlert(topic) {
-  await sendTradeAlert({
-    title: '🔔 Trade Scanner — Test',
-    body: 'Notifications are working! You will receive alerts when targets are hit.',
-    type: 'info',
-    topic,
+// ─── Specific trade alerts ────────────────────────────────────────────────────
+
+export async function alertGreenStock(symbol, dp, fib = null) {
+  const dpStr = dp != null ? ` (${dp > 0 ? '+' : ''}${dp.toFixed(1)}%)` : ''
+  const parts = []
+  if (fib?.entryPrice) parts.push(`Entry: $${fib.entryPrice.toFixed(2)}`)
+  if (fib?.stopLoss)   parts.push(`Stop: $${fib.stopLoss.toFixed(2)}`)
+  if (fib?.target2)    parts.push(`T2: $${fib.target2.toFixed(2)}`)
+  const body = `All filters GREEN.${parts.length ? ' ' + parts.join(' | ') : ''}`
+  await notify(`BUY SIGNAL: ${symbol}${dpStr}`, body, {
+    type: 'green', priority: 'high', tags: 'white_check_mark,rocket',
   })
 }
 
-// Request browser notification permission explicitly
+export async function alertStopLoss(symbol, price, stopLevel) {
+  await notify(
+    `STOP LOSS: ${symbol}`,
+    `Price $${price.toFixed(2)} hit stop at $${stopLevel.toFixed(2)}. Exit position.`,
+    { type: 'stop', priority: 'urgent', tags: 'warning,red_circle' },
+  )
+}
+
+export async function alertTakeProfit(symbol, price, targetLabel, targetPrice, isPartial = false) {
+  const action = isPartial ? 'Consider partial exit.' : 'Consider full exit.'
+  await notify(
+    `TAKE PROFIT: ${symbol} — ${targetLabel}`,
+    `Price $${price.toFixed(2)} reached $${targetPrice.toFixed(2)}. ${action}`,
+    { type: 'profit', priority: 'high', tags: 'moneybag,chart_with_upwards_trend' },
+  )
+}
+
+export async function alertAvoidNews(symbol, headline) {
+  await notify(
+    `AVOID NEWS: ${symbol}`,
+    `Fundamental damage detected: "${headline}"`,
+    { type: 'avoid', priority: 'default', tags: 'x,newspaper' },
+  )
+}
+
+// ─── Utility ─────────────────────────────────────────────────────────────────
+
+// Backward-compat wrapper used by settings UI
+export async function sendTradeAlert({ title, body, type = 'info' }) {
+  const priority = type === 'stop' ? 'high' : 'default'
+  await notify(title, body, { type, priority })
+}
+
+// Test alert — topic param kept for backward compat but ignored
+export async function sendTestAlert(_topic) {
+  await notify(
+    'Test — Trade Scanner Active',
+    'Push notifications are working. You will receive alerts for GREEN stocks, stop losses, and targets.',
+    { type: 'info', priority: 'default', tags: 'bell' },
+  )
+}
+
 export async function requestBrowserPermission() {
   if (!('Notification' in window)) return 'unsupported'
   if (Notification.permission !== 'default') return Notification.permission

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Header } from '../components/Header'
 import { StatusBadge } from '../components/StatusBadge'
 import { FilterList } from '../components/FilterList'
@@ -15,6 +15,8 @@ import { classifyNewsList } from '../utils/newsClassifier'
 import { calculateFibLevels } from '../utils/fibonacci'
 import { formatMarketCap, formatVol } from '../utils/filters'
 import { isWatched, toggleWatch } from '../services/watchlist'
+import { useLivePrice } from '../hooks/useLivePrice'
+import { alertStopLoss, alertTakeProfit, alertAvoidNews } from '../services/notify'
 
 export function DetailScreen({ stockData: initialData, onBack }) {
   const [data, setData] = useState(initialData)
@@ -92,6 +94,42 @@ export function DetailScreen({ stockData: initialData, onBack }) {
     window.addEventListener('watchlistChange', handle)
     return () => window.removeEventListener('watchlistChange', handle)
   }, [symbol])
+
+  // Live price for alert monitoring (separate from LivePriceTicker display)
+  const { price: livePrice } = useLivePrice(symbol, price)
+  const alertedLevels = useRef(new Set())
+
+  // Stop loss and take profit alerts — fire once per level per session
+  useEffect(() => {
+    if (livePrice === null || !fib) return
+    const al = alertedLevels.current
+    if (!al.has('stop') && fib.stopLoss && livePrice <= fib.stopLoss) {
+      al.add('stop')
+      alertStopLoss(symbol, livePrice, fib.stopLoss).catch(() => {})
+    }
+    if (!al.has('t1') && fib.target1 && livePrice >= fib.target1) {
+      al.add('t1')
+      alertTakeProfit(symbol, livePrice, 'Target 1', fib.target1, true).catch(() => {})
+    }
+    if (!al.has('t2') && fib.target2 && livePrice >= fib.target2) {
+      al.add('t2')
+      alertTakeProfit(symbol, livePrice, 'Target 2', fib.target2, true).catch(() => {})
+    }
+    if (!al.has('t3') && fib.target3 && livePrice >= fib.target3) {
+      al.add('t3')
+      alertTakeProfit(symbol, livePrice, 'Target 3', fib.target3, false).catch(() => {})
+    }
+  }, [livePrice, fib, symbol])
+
+  // Avoid news alert — fire once when AVOID headline detected
+  const avoidNewsAlerted = useRef(false)
+  useEffect(() => {
+    if (!avoidNewsAlerted.current && newsClassified.some(n => n.classification === 'AVOID')) {
+      avoidNewsAlerted.current = true
+      const first = newsClassified.find(n => n.classification === 'AVOID')
+      if (first) alertAvoidNews(symbol, first.headline).catch(() => {})
+    }
+  }, [newsClassified, symbol])
 
   const hasAvoidNews = newsClassified.some(n => n.classification === 'AVOID')
   const avoidNewsItems = newsClassified.filter(n => n.classification === 'AVOID')
