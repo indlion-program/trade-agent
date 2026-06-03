@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { subscribeTicker } from '../services/websocket'
-import { getPortfolio, sellPartial, sellAll } from '../services/paper'
+import { getPortfolio, sellPartial, sellAll, executeLimitOrder } from '../services/paper'
 import { sendTradeAlert } from '../services/notify'
 
 // Watches all open positions via WebSocket and auto-executes Fibonacci targets/stop.
@@ -15,7 +15,24 @@ export function usePriceMonitor() {
   }
 
   function checkThresholds(symbol, price) {
-    const { positions, notifyTopic } = getPortfolio()
+    const { positions, pendingOrders = [], notifyTopic } = getPortfolio()
+
+    // Check limit orders — execute if price has crossed the limit price
+    for (const order of pendingOrders.filter(o => o.symbol === symbol)) {
+      const triggered = order.direction === 'up'
+        ? price >= order.limitPrice    // gap-down: buy when price bounces up to entry
+        : price <= order.limitPrice    // gap-up: buy when price pulls back down to entry
+      if (triggered) {
+        executeLimitOrder(order.id, price)
+        sendTradeAlert({
+          title: `✅ ENTRY FILLED — ${symbol}`,
+          body: `Limit order filled: bought ${order.shares} shares at $${price.toFixed(2)}`,
+          type: 'target',
+          topic: notifyTopic,
+        })
+      }
+    }
+
     const openForSymbol = positions.filter(p => p.symbol === symbol)
 
     for (const pos of openForSymbol) {
@@ -66,8 +83,11 @@ export function usePriceMonitor() {
   }
 
   function syncSubscriptions() {
-    const { positions } = getPortfolio()
-    const needed = new Set(positions.map(p => p.symbol))
+    const { positions, pendingOrders = [] } = getPortfolio()
+    const needed = new Set([
+      ...positions.map(p => p.symbol),
+      ...pendingOrders.map(o => o.symbol),
+    ])
 
     // Unsubscribe from symbols no longer in positions
     for (const sym of Object.keys(subsRef.current)) {

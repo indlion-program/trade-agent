@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { usePaperPortfolio } from '../hooks/usePaperPortfolio'
 import { usePriceMonitor } from '../hooks/usePriceMonitor'
-import { sellAll, setNotifyTopic, resetPortfolio } from '../services/paper'
+import { sellAll, cancelLimitOrder, setNotifyTopic, resetPortfolio } from '../services/paper'
 import { sendTestAlert, requestBrowserPermission, getBrowserPermission } from '../services/notify'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -64,7 +64,20 @@ export function PortfolioScreen() {
   const winRate = total > 0 ? Math.round((wins / total) * 100) : null
 
   return (
-    <div className="min-h-screen pb-24" style={{ background: '#080810' }}>
+    <div className="min-h-screen pb-32" style={{ background: '#080810' }}>
+      {/* ── Top bar ─────────────────────────────────────────────────────────── */}
+      <div className="sticky top-0 z-40 px-4 py-3 flex items-center justify-between"
+        style={{ background: 'rgba(8,8,16,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(79,110,247,0.12)' }}>
+        <div className="flex items-center gap-2">
+          <span style={{ fontSize: '20px' }}>💼</span>
+          <span className="font-bold text-base" style={{ color: '#f0f2ff' }}>Portfolio</span>
+        </div>
+        <span className="text-xs px-2 py-1 rounded-full font-semibold"
+          style={{ background: 'rgba(79,110,247,0.12)', color: '#818cf8', border: '1px solid rgba(79,110,247,0.2)' }}>
+          Demo
+        </span>
+      </div>
+
       {/* ── Portfolio Summary ───────────────────────────────────────────────── */}
       <div className="px-4 pt-4 pb-2">
         <div className="rounded-2xl p-5 relative overflow-hidden"
@@ -94,6 +107,37 @@ export function PortfolioScreen() {
           </div>
         </div>
       </div>
+
+      {/* ── Pending Limit Orders ────────────────────────────────────────────── */}
+      {portfolio.pendingOrders?.length > 0 && (
+        <Section title="Limit Orders" count={portfolio.pendingOrders.length}>
+          <div className="space-y-2">
+            {portfolio.pendingOrders.map(order => (
+              <div key={order.id} className="flex items-center gap-3 px-4 py-3 rounded-xl"
+                style={{ background: '#0f0f1a', border: '1px solid rgba(79,110,247,0.2)' }}>
+                <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-sm animate-pulse"
+                  style={{ background: 'rgba(79,110,247,0.15)', color: '#818cf8' }}>⏳</div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold" style={{ color: '#f0f2ff' }}>{order.symbol}</span>
+                    <span className="text-xs" style={{ color: '#64748b' }}>
+                      {order.direction === 'up' ? '↑ enters when price ≥' : '↓ enters when price ≤'} ${order.limitPrice.toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="text-xs" style={{ color: '#475569' }}>
+                    {order.shares} shares · reserved ${(order.reserved).toFixed(2)}
+                  </div>
+                </div>
+                <button onClick={() => cancelLimitOrder(order.id)}
+                  className="text-xs px-2.5 py-1.5 rounded-lg font-semibold"
+                  style={{ background: 'rgba(239,68,68,0.08)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.2)' }}>
+                  Cancel
+                </button>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
 
       {/* ── Open Positions ──────────────────────────────────────────────────── */}
       <Section title="Open Positions" count={portfolio.positions?.length || 0}>

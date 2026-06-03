@@ -105,13 +105,17 @@ export function createScanner() {
     emit()
   }
 
-  async function pass2(mode, { concurrency = 4 } = {}) {
+  async function pass2(mode, { concurrency = 4, maxCandidates = 25 } = {}) {
     const isUp = mode === 'gap_up'
-    const queue = [...state.candidates].sort((a, b) =>
-      isUp
-        ? (b.quote?.dp ?? 0) - (a.quote?.dp ?? 0)   // gap-up: biggest gains first
-        : (a.quote?.dp ?? 0) - (b.quote?.dp ?? 0)    // gap-down: biggest drops first
-    )
+    // Sort by biggest gap, then cap at maxCandidates to keep Finnhub calls manageable.
+    // At 55 calls/min and 5 calls/stock: 25 stocks ≈ 2-3 minutes max.
+    const queue = [...state.candidates]
+      .sort((a, b) =>
+        isUp
+          ? (b.quote?.dp ?? 0) - (a.quote?.dp ?? 0)
+          : (a.quote?.dp ?? 0) - (b.quote?.dp ?? 0)
+      )
+      .slice(0, maxCandidates)
     let idx = 0
     async function worker() {
       while (idx < queue.length && !state.cancelled) {

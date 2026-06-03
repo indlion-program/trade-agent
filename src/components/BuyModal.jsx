@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { buyPosition, getPortfolio } from '../services/paper'
+import { buyPosition, setLimitBuy, getPortfolio } from '../services/paper'
 
 export function BuyModal({ stockData, fib, onClose, onBought }) {
   const { symbol, mode } = stockData
@@ -12,11 +12,14 @@ export function BuyModal({ stockData, fib, onClose, onBought }) {
   const fullFill   = fib?.fullFill   ?? null
   const rr         = fib?.riskReward ?? null
 
-  const portfolio    = getPortfolio()
+  const portfolio     = getPortfolio()
   const defaultShares = suggestedEntry > 0 ? Math.max(1, Math.floor(1000 / suggestedEntry)) : 1
   const [shares, setShares] = useState(defaultShares)
+  const [orderType, setOrderType] = useState('limit')  // 'limit' | 'market'
+  const currentPrice = stockData.quote?.c ?? suggestedEntry
+  const execPrice = orderType === 'limit' ? suggestedEntry : currentPrice
 
-  const cost      = parseFloat((shares * suggestedEntry).toFixed(2))
+  const cost      = parseFloat((shares * execPrice).toFixed(2))
   const canAfford = cost <= portfolio.cash
   const riskPerSh = stopLoss ? parseFloat((suggestedEntry - stopLoss).toFixed(2)) : null
   const rewardPerSh = target2 ? parseFloat((target2 - suggestedEntry).toFixed(2)) : null
@@ -26,7 +29,9 @@ export function BuyModal({ stockData, fib, onClose, onBought }) {
   }
 
   function handleBuy() {
-    const result = buyPosition(symbol, suggestedEntry, shares, fib, mode)
+    const result = orderType === 'limit'
+      ? setLimitBuy(symbol, suggestedEntry, shares, fib, mode)
+      : buyPosition(symbol, currentPrice, shares, fib, mode)
     if (result.ok) {
       onBought?.()
       onClose()
@@ -102,6 +107,35 @@ export function BuyModal({ stockData, fib, onClose, onBought }) {
             )}
           </div>
 
+          {/* Order type toggle */}
+          <div className="flex gap-2 mb-4">
+            {[
+              { id: 'limit', label: '⏳ Limit at Entry', sub: `Fill when price reaches $${suggestedEntry.toFixed(2)}` },
+              { id: 'market', label: '⚡ Buy Now', sub: `Execute at $${currentPrice.toFixed(2)}` },
+            ].map(opt => (
+              <button
+                key={opt.id}
+                onClick={() => setOrderType(opt.id)}
+                className="flex-1 px-3 py-2.5 rounded-xl text-left"
+                style={{
+                  background: orderType === opt.id ? 'rgba(79,110,247,0.15)' : '#1a1a2e',
+                  border: `1px solid ${orderType === opt.id ? 'rgba(79,110,247,0.4)' : 'rgba(79,110,247,0.1)'}`,
+                  boxShadow: orderType === opt.id ? '0 0 10px rgba(79,110,247,0.15)' : 'none',
+                }}
+              >
+                <div className="text-xs font-bold" style={{ color: orderType === opt.id ? '#818cf8' : '#64748b' }}>{opt.label}</div>
+                <div className="text-xs mt-0.5" style={{ color: '#475569' }}>{opt.sub}</div>
+              </button>
+            ))}
+          </div>
+
+          {orderType === 'limit' && (
+            <div className="text-xs px-3 py-2 rounded-xl mb-4"
+              style={{ background: 'rgba(79,110,247,0.07)', border: '1px solid rgba(79,110,247,0.15)', color: '#818cf8' }}>
+              🎯 Order will execute automatically when the price reaches the Fib entry zone. You'll get a push notification.
+            </div>
+          )}
+
           {/* R/R badge */}
           {rr && (
             <div className="flex items-center gap-2 mb-5 px-4 py-3 rounded-xl"
@@ -168,7 +202,9 @@ export function BuyModal({ stockData, fib, onClose, onBought }) {
               boxShadow: canAfford ? '0 0 24px rgba(79,110,247,0.35)' : 'none',
             }}
           >
-            Buy {shares} shares of {symbol}
+            {orderType === 'limit'
+            ? `Set Limit — ${shares} shares at $${suggestedEntry.toFixed(2)}`
+            : `Buy Now — ${shares} shares at $${currentPrice.toFixed(2)}`}
           </button>
 
           <p className="text-center text-xs mt-3" style={{ color: '#475569' }}>

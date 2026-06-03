@@ -3,9 +3,10 @@
 const KEY = 'paper-portfolio-v2'
 
 const DEFAULT_STATE = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   cash: 20000,
   positions: [],
+  pendingOrders: [],   // limit orders waiting to be filled
   history: [],
   notifyTopic: '',
   totalDeposited: 20000,
@@ -14,16 +15,17 @@ const DEFAULT_STATE = {
 // ─── Load / Save ─────────────────────────────────────────────────────────────
 
 function migrate(raw) {
-  // schemaVersion missing (v1 data) → add missing fields
   if (!raw.schemaVersion) {
     raw.schemaVersion = 2
     raw.totalDeposited = raw.totalDeposited ?? 20000
     raw.notifyTopic = raw.notifyTopic ?? ''
     raw.positions = (raw.positions || []).map(p => ({
-      ...p,
-      sharesOpen: p.sharesOpen ?? p.shares,
-      hitTargets: p.hitTargets ?? [],
+      ...p, sharesOpen: p.sharesOpen ?? p.shares, hitTargets: p.hitTargets ?? [],
     }))
+  }
+  if (raw.schemaVersion < 3) {
+    raw.schemaVersion = 3
+    raw.pendingOrders = raw.pendingOrders ?? []
   }
   return raw
 }
@@ -141,6 +143,79 @@ export function sellAll(id, exitPrice, reason) {
   })
 
   save(state)
+}
+
+// ─── Limit orders ─────────────────────────────────────────────────────────────
+
+// Create a pending limit order. Cash is reserved immediately.
+// direction: 'up' = fill when price rises to limitPrice (gap-down entry)
+//            'down' = fill when price falls to limitPrice (gap-up pullback entry)
+export function setLimitBuy(symbol, limitPrice, shares, fibData, mode) {
+  const state = load()
+  const reserved = parseFloat((limitPrice * shares).toFixed(2))
+  if (reserved > state.cash) return { ok: false, error: 'Insufficient cash' }
+
+  state.pendingOrders = state.pendingOrders || []
+  state.pendingOrders.push({
+    id: String(Date.now()),
+    symbol,
+    mode: mode || 'gap_down',
+    limitPrice: parseFloat(limitPrice.toFixed(2)),
+    shares,
+    reserved,
+    fibData,
+    createdAt: Date.now(),
+    direction: mode === 'gap_up' ? 'down' : 'up',
+  })
+  state.cash = parseFloat((state.cash - reserved).toFixed(2))
+  save(state)
+  return { ok: true }
+}
+
+// Cancel a pending order — refunds reserved cash.
+export function cancelLimitOrder(id) {
+  const state = load()
+  state.pendingOrders = state.pendingOrders || []
+  const idx = state.pendingOrders.findIndex(o => o.id === id)
+  if (idx === -1) return
+  state.cash = parseFloat((state.cash + state.pendingOrders[idx].reserved).toFixed(2))
+  state.pendingOrders.splice(idx, 1)
+  save(state)
+}
+
+// Execute a pending order at the actual fill price (triggered by price monitor).
+export function executeLimitOrder(id, fillPrice) {
+  const state = load()
+  state.pendingOrders = state.pendingOrders || []
+  const idx = state.pendingOrders.findIndex(o => o.id === id)
+  if (idx === -1) return null
+  const order = state.pendingOrders[idx]
+
+  // Refund difference if filled at better price (slippage credit or debit)
+  const actualCost = parseFloat((fillPrice * order.shares).toFixed(2))
+  const diff = parseFloat((order.reserved - actualCost).toFixed(2))
+  state.cash = parseFloat((state.cash + diff).toFixed(2))
+
+  const position = {
+    id: `${id}-fill`,
+    symbol: order.symbol,
+    mode: order.mode,
+    entryPrice: parseFloat(fillPrice.toFixed(2)),
+    shares: order.shares,
+    sharesOpen: order.shares,
+    cost: actualCost,
+    stopLoss:  order.fibData?.stopLoss  ?? null,
+    target1:   order.fibData?.target1   ?? null,
+    target2:   order.fibData?.target2   ?? null,
+    fullFill:  order.fibData?.fullFill  ?? null,
+    openedAt:  Date.now(),
+    hitTargets: [],
+    filledFromLimit: true,
+  }
+  state.positions.push(position)
+  state.pendingOrders.splice(idx, 1)
+  save(state)
+  return position
 }
 
 export function setNotifyTopic(topic) {
