@@ -231,7 +231,7 @@ export function ScannerScreen({ onSelectStock }) {
         {/* Scan button */}
         <button
           onClick={isScanning ? cancel : handleScan}
-          disabled={!isScanning && currentUniverse.length === 0}
+          disabled={!isScanning && currentUniverse !== null && currentUniverse.length === 0}
           className="w-full py-3.5 rounded-xl font-bold text-base mb-4 disabled:opacity-60 flex items-center justify-center gap-2"
           style={{
             background: isScanning ? '#3a1e1e' : '#1e3a2f',
