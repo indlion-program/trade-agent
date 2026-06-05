@@ -32,21 +32,22 @@ async function postScreener(body) {
 
 // Column index map — must match the `columns` array in buildRequest()
 const COL = {
-  name:        0,
-  close:       1,   // yesterday's regular session close
-  change:      2,   // % change from regular close to current (pre-market)
-  volume:      3,   // yesterday's regular session volume
-  marketCap:   4,
-  sector:      5,
-  exchange:    6,
-  description: 7,
-  avgVol10d:   8,
-  pmChange:    9,
-  pmClose:     10,
-  pmHigh:      11,
-  pmLow:       12,
-  pmVolume:    13,
-  pe:          14,  // P/E TTM — eliminates the Finnhub /stock/metric call
+  name:         0,
+  close:        1,   // yesterday's regular session close
+  change:       2,   // % change from regular close to current (pre-market)
+  volume:       3,   // yesterday's regular session volume
+  marketCap:    4,
+  sector:       5,
+  exchange:     6,
+  description:  7,
+  avgVol10d:    8,
+  pmChange:     9,
+  pmClose:      10,
+  pmHigh:       11,
+  pmLow:        12,
+  pmVolume:     13,
+  pe:           14,  // P/E TTM — eliminates the Finnhub /stock/metric call
+  earningsDate: 15,  // Unix timestamp of next earnings release — eliminates Finnhub earnings call
 }
 
 const COLUMNS = [
@@ -55,6 +56,7 @@ const COLUMNS = [
   'premarket_change', 'premarket_close', 'premarket_high',
   'premarket_low', 'premarket_volume',
   'price_earnings_ttm',
+  'earnings_release_date',
 ]
 
 function buildRequest(mode = 'gap_down', limit = 500) {
@@ -125,13 +127,14 @@ export async function tvPreScreen(mode = 'gap_down') {
         o:  prevClose,
       },
       tvData: {
-        marketCap: d[COL.marketCap],
-        avgVol10d: d[COL.avgVol10d],
-        pe:        d[COL.pe],
-        pmHigh:    d[COL.pmHigh],
-        pmLow:     d[COL.pmLow],
-        pmVolume:  d[COL.pmVolume],
+        marketCap:    d[COL.marketCap],
+        avgVol10d:    d[COL.avgVol10d],
+        pe:           d[COL.pe],
+        pmHigh:       d[COL.pmHigh],
+        pmLow:        d[COL.pmLow],
+        pmVolume:     d[COL.pmVolume],
         prevClose,
+        earningsDate: d[COL.earningsDate] ?? null,
         // Also store display fields so fetchLightAnalysis can build profile without Finnhub
         sector:    d[COL.sector] || '',
         exchange:  d[COL.exchange] || '',

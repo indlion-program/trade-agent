@@ -8,7 +8,7 @@
 //          Finnhub fallback: 5 calls per candidate (full analysis).
 //   Earnings calendar fetched once and shared across all candidates.
 
-import { getQuote, fetchFullAnalysis, fetchLightAnalysis, getEarnings, getUsSymbols } from './finnhub'
+import { getQuote, fetchFullAnalysis, fetchLightAnalysis, getUsSymbols } from './finnhub'
 import { tvPreScreen } from './tradingview'
 import { runAllFilters, STRATEGY_CONFIG } from '../utils/filters'
 import { classifyNewsList } from '../utils/newsClassifier'
@@ -134,15 +134,9 @@ export function createScanner() {
     emit()
   }
 
-  async function pass2(mode, { concurrency = 8, maxCandidates = 50 } = {}) {
+  async function pass2(mode, { concurrency = 8, maxCandidates = 500 } = {}) {
     const isUp = mode === 'gap_up'
-
-    // TV mode: fetch earnings once (1 call total) shared across all candidates.
-    const todayStr = new Date().toISOString().slice(0, 10)
-    let sharedEarnings = null
-    if (state.tvMode) {
-      try { sharedEarnings = await getEarnings(todayStr, todayStr) } catch {}
-    }
+    const sharedEarnings = null  // TV mode: earnings date from tvData.earningsDate (0 Finnhub calls)
 
     const queue = [...state.candidates]
       .sort((a, b) =>

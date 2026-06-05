@@ -193,18 +193,12 @@ export async function getPreMarketCandles(symbol) {
   return getCandles(symbol, 1, from, to)
 }
 
-// ─── Light analysis (TV mode) — 2 Finnhub calls per symbol ─────────────────
+// ─── Light analysis (TV mode) — 0 Finnhub calls per symbol ─────────────────
 // Used when tvData is available from the TradingView screener.
-// Skips quote/profile/metrics (all in tvData) and fetches only news + splits.
-// sharedEarnings is pre-fetched once for all candidates (0 extra calls).
+// Skips quote/profile/metrics/splits/earnings (all in tvData) and fetches only
+// Yahoo RSS news (no API key, no rate limit).
 export async function fetchLightAnalysis(symbol, existingQuote, tvData, sharedEarnings = null) {
-  const yearAgoStr = new Date(Date.now() - 365 * 24 * 3600 * 1000).toISOString().slice(0, 10)
-  const todayStr = new Date().toISOString().slice(0, 10)
-
-  const [news, splits] = await Promise.allSettled([
-    getNewsYahoo(symbol),
-    getSplits(symbol, yearAgoStr, todayStr),
-  ])
+  const news = await getNewsYahoo(symbol).catch(() => [])
 
   // Build Finnhub-compatible profile/metrics from tvData.
   // filterDailyVolume, filterMarketCap, filterPMVolumeRatio, filterPE all read
@@ -229,9 +223,9 @@ export async function fetchLightAnalysis(symbol, existingQuote, tvData, sharedEa
     quote: existingQuote,
     profile,
     metrics,
-    news: news.status === 'fulfilled' ? news.value : [],
+    news,
     earnings: sharedEarnings,
-    splits: splits.status === 'fulfilled' ? splits.value : [],
+    splits: [],  // large-cap stocks (>$500M) rarely reverse-split; safe to skip
     tvData,
   }
 }
