@@ -151,26 +151,12 @@ export function filterNoReverseSplit(splits) {
 }
 
 // Filter 9: Earnings day — mode-aware (earnings_down requires it; others skip it)
-// tvEarningsDate: Unix timestamp from TradingView earnings_release_date column.
-// When present it takes priority over Finnhub earningsData (0 API calls).
-export function filterEarningsDay(earningsData, symbol, cfg, tvEarningsDate = null) {
-  const today = new Date().toISOString().slice(0, 10)
-
-  if (tvEarningsDate != null) {
-    const earningsDateStr = new Date(tvEarningsDate * 1000).toISOString().slice(0, 10)
-    const hasEarnings = earningsDateStr === today
-    if (cfg.requireEarnings) {
-      return result(hasEarnings, hasEarnings,
-        hasEarnings ? 'Earnings today ✓ — catalyst present' : 'No earnings today — skip')
-    }
-    return result(!hasEarnings, hasEarnings,
-      hasEarnings ? 'EARNINGS DAY — skip' : 'No earnings today')
-  }
-
+export function filterEarningsDay(earningsData, symbol, cfg) {
   if (!earningsData?.earningsCalendar) {
     return result(cfg.requireEarnings ? null : true, null,
       cfg.requireEarnings ? 'Earnings data unavailable' : 'Earnings data unavailable')
   }
+  const today = new Date().toISOString().slice(0, 10)
   const hasEarnings = earningsData.earningsCalendar.some(
     e => e.symbol === symbol && e.date === today
   )
@@ -309,7 +295,7 @@ export function runAllFilters(data, mode = 'gap_down') {
   const f6  = filterPMVolumeRatio(quote, metrics, cfg)
   const f7  = filterMarketCap(profile, cfg)
   const f8  = filterNoReverseSplit(splits)
-  const f9  = filterEarningsDay(earnings, symbol, cfg, tvData?.earningsDate ?? null)
+  const f9  = filterEarningsDay(earnings, symbol, cfg)
   const f10 = filterEntryTiming()
   const f11 = filterAmericanBulls()
   const f12 = filterRR(quote, cfg)

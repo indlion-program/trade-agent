@@ -150,8 +150,15 @@ export async function getNewsYahoo(symbol) {
     return idbHit
   }
 
-  const resp = await fetch(`/api/news?symbol=${encodeURIComponent(symbol)}`)
-  const data = resp.ok ? await resp.json() : []
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 5000)
+  let data = []
+  try {
+    const resp = await fetch(`/api/news?symbol=${encodeURIComponent(symbol)}`, { signal: ctrl.signal })
+    data = resp.ok ? await resp.json() : []
+  } catch { /* timeout or network error — skip news */ } finally {
+    clearTimeout(timer)
+  }
   memSet(cacheKey, data, TTL.news)
   setCached(cacheKey, data, TTL.news)
   return data
