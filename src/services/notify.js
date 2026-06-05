@@ -99,6 +99,15 @@ export async function alertAvoidNews(symbol, headline) {
   )
 }
 
+export async function alertPriceAlarm(symbol, direction, targetPrice, currentPrice) {
+  const emoji = direction === 'above' ? '↑' : '↓'
+  await notify(
+    `ALARM: ${symbol} ${emoji} $${targetPrice.toFixed(2)}`,
+    `Price $${currentPrice.toFixed(2)} crossed your ${direction} target of $${targetPrice.toFixed(2)}.`,
+    { type: direction === 'above' ? 'green' : 'stop', priority: 'high', tags: direction === 'above' ? 'bell,chart_with_upwards_trend' : 'bell,warning' },
+  )
+}
+
 // ─── Utility ─────────────────────────────────────────────────────────────────
 
 // Backward-compat wrapper used by settings UI

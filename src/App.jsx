@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { ScannerScreen } from './screens/ScannerScreen'
 import { DetailScreen } from './screens/DetailScreen'
 import { PortfolioScreen } from './screens/PortfolioScreen'
+import { AlarmsScreen } from './screens/AlarmsScreen'
 
 export default function App() {
   const [tab, setTab] = useState('scanner')
@@ -36,6 +37,11 @@ export default function App() {
         <PortfolioScreen />
       </div>
 
+      {/* Alarms — always mounted so WebSocket subscriptions stay active */}
+      <div style={{ display: tab === 'alarms' ? 'block' : 'none' }}>
+        <AlarmsScreen />
+      </div>
+
       {/* Persistent bottom tab bar */}
       <TabBar active={selectedStock ? 'scanner' : tab} onChange={handleTabChange} />
     </>
@@ -53,6 +59,7 @@ export function TabBar({ active, onChange }) {
       }}
     >
       <TabBtn id="scanner"   label="Scanner"   icon="📡" active={active} onChange={onChange} />
+      <TabBtn id="alarms"    label="Alarms"    icon="🔔" active={active} onChange={onChange} />
       <TabBtn id="portfolio" label="Portfolio" icon="💼" active={active} onChange={onChange} />
     </div>
   )

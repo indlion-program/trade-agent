@@ -3,12 +3,13 @@ import { UNIVERSE_GROUPS } from '../data/universe'
 import { expandToFullUsUniverse } from '../services/scanner'
 
 const PRESETS = [
-  { id: 'starter', label: 'Watchlist', desc: '20 mega-caps — instant' },
-  { id: 'curated', label: 'Curated', desc: `${UNIVERSE_GROUPS.curated.length} liquid stocks + ETFs` },
-  { id: 'largecaps', label: 'Large Caps', desc: `${UNIVERSE_GROUPS.largecaps.length} S&P 500 core` },
-  { id: 'etfs', label: 'ETFs Only', desc: `${UNIVERSE_GROUPS.etfs.length} liquid ETFs` },
-  { id: 'tech', label: 'Tech', desc: `${UNIVERSE_GROUPS.tech.length} tech & growth` },
-  { id: 'speculative', label: 'Speculative', desc: `${UNIVERSE_GROUPS.speculative.length} EV / meme / crypto` },
+  { id: 'starter',   label: 'Watchlist',         desc: '20 mega-caps — instant' },
+  { id: 'large_us',  label: 'All US >$500M',      desc: '~2,500 NYSE/NASDAQ stocks via TV screener', count: '~2,500+' },
+  { id: 'curated',   label: 'Curated',            desc: `${UNIVERSE_GROUPS.curated.length} liquid stocks + ETFs` },
+  { id: 'largecaps', label: 'Large Caps',         desc: `${UNIVERSE_GROUPS.largecaps.length} S&P 500 core` },
+  { id: 'etfs',      label: 'ETFs Only',          desc: `${UNIVERSE_GROUPS.etfs.length} liquid ETFs` },
+  { id: 'tech',      label: 'Tech',               desc: `${UNIVERSE_GROUPS.tech.length} tech & growth` },
+  { id: 'speculative',label: 'Speculative',       desc: `${UNIVERSE_GROUPS.speculative.length} EV / meme / crypto` },
 ]
 
 export function UniverseSelector({ value, fullUniverse, onChange, onExpandUniverse }) {
@@ -27,13 +28,16 @@ export function UniverseSelector({ value, fullUniverse, onChange, onExpandUniver
     }
   }
 
+  const currentPreset = PRESETS.find(p => p.id === value)
   const currentLabel =
     value === 'full' && fullUniverse
       ? `Full US (${fullUniverse.length.toLocaleString()})`
-      : PRESETS.find((p) => p.id === value)?.label || 'Custom'
+      : currentPreset?.label || 'Custom'
   const currentCount =
     value === 'full' && fullUniverse
       ? fullUniverse.length
+      : value === 'large_us'
+      ? '~2,500+'
       : UNIVERSE_GROUPS[value]?.length || 0
 
   return (
@@ -48,7 +52,7 @@ export function UniverseSelector({ value, fullUniverse, onChange, onExpandUniver
             UNIVERSE
           </div>
           <div className="text-sm font-semibold mt-0.5" style={{ color: '#f1f5f9' }}>
-            {currentLabel} <span style={{ color: '#64748b', fontWeight: 'normal' }}>· {currentCount.toLocaleString()} symbols</span>
+            {currentLabel} <span style={{ color: '#64748b', fontWeight: 'normal' }}>· {typeof currentCount === 'number' ? currentCount.toLocaleString() : currentCount} symbols</span>
           </div>
         </div>
         <svg

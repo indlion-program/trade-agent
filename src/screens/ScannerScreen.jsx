@@ -49,13 +49,14 @@ export function ScannerScreen({ onSelectStock }) {
   }, [])
 
   const currentUniverse =
-    universeId === 'full' && fullUniverse ? fullUniverse : UNIVERSE_GROUPS[universeId] || []
+    universeId === 'full' && fullUniverse ? fullUniverse :
+    universeId === 'large_us' ? null :           // null = TV screener all results, no post-filter
+    UNIVERSE_GROUPS[universeId] || UNIVERSE_GROUPS.curated
 
   const handleScan = useCallback(async () => {
-    await scan(
-      currentUniverse.length > 0 ? currentUniverse : UNIVERSE_GROUPS.curated,
-      { mode: strategyMode }
-    )
+    // large_us / null → pass [] so scanner skips symbol post-filtering (TV screener enforces >$500M)
+    // others → pass symbol list
+    await scan(currentUniverse ?? [], { mode: strategyMode })
   }, [currentUniverse, scan, strategyMode])
 
   const handleRefresh = useCallback(async () => {

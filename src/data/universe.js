@@ -152,6 +152,8 @@ export const UNIVERSE_GROUPS = {
   tech: dedupe(TECH),
   speculative: dedupe(MID_CAP_SPEC),
   etfs: dedupe(ETFS),
+  // null = no symbol post-filter; TV screener enforces market_cap > $500M server-side
+  large_us: null,
 }
 
 // ─── Filter Finnhub symbol response → tradeable subset ────────────────────
