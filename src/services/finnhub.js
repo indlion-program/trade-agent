@@ -135,6 +135,28 @@ export function getNews(symbol) {
   return apiGet('/company-news', { symbol, from: today, to: today }, TTL.news, `news:${symbol}:${today}`)
 }
 
+// Yahoo Finance RSS — free, no API key, no rate limit. Used in TV mode to
+// avoid spending Finnhub quota on news. Returns same {headline} shape as getNews().
+export async function getNewsYahoo(symbol) {
+  const today = new Date().toISOString().slice(0, 10)
+  const cacheKey = `news_yahoo:${symbol}:${today}`
+
+  const memHit = memGet(cacheKey)
+  if (memHit !== null) return memHit
+
+  const idbHit = await getCached(cacheKey)
+  if (idbHit !== null) {
+    memSet(cacheKey, idbHit, TTL.news)
+    return idbHit
+  }
+
+  const resp = await fetch(`/api/news?symbol=${encodeURIComponent(symbol)}`)
+  const data = resp.ok ? await resp.json() : []
+  memSet(cacheKey, data, TTL.news)
+  setCached(cacheKey, data, TTL.news)
+  return data
+}
+
 export function getEarnings(from, to) {
   return apiGet('/calendar/earnings', { from, to }, TTL.earnings, `earnings:${from}:${to}`)
 }
@@ -180,7 +202,7 @@ export async function fetchLightAnalysis(symbol, existingQuote, tvData, sharedEa
   const todayStr = new Date().toISOString().slice(0, 10)
 
   const [news, splits] = await Promise.allSettled([
-    getNews(symbol),
+    getNewsYahoo(symbol),
     getSplits(symbol, yearAgoStr, todayStr),
   ])
 

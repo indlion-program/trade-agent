@@ -2,6 +2,51 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
+// Dev-only middleware: replicates api/news.js for local `vite dev`
+function newsDevPlugin() {
+  function extractField(block, tag) {
+    const cdata = block.match(new RegExp(`<${tag}>[^<]*<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>[^<]*<\\/${tag}>`))
+    if (cdata) return cdata[1].trim()
+    const plain = block.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`))
+    if (!plain) return null
+    return plain[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').trim()
+  }
+  return {
+    name: 'news-dev',
+    configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        if (!req.url.startsWith('/api/news')) return next()
+        const symbol = new URL(req.url, 'http://localhost').searchParams.get('symbol')
+        if (!symbol || !/^[A-Za-z0-9.\-]{1,10}$/.test(symbol)) {
+          res.statusCode = 400
+          res.setHeader('Content-Type', 'application/json')
+          return res.end(JSON.stringify({ error: 'Invalid symbol' }))
+        }
+        try {
+          const rssUrl = `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(symbol.toUpperCase())}&region=US&lang=en-US`
+          const upstream = await fetch(rssUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; newsbot/1.0)', 'Accept': 'application/rss+xml, application/xml, text/xml' },
+          })
+          const xml = upstream.ok ? await upstream.text() : ''
+          const items = []
+          for (const match of xml.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
+            const block = match[1]
+            const headline = extractField(block, 'title')
+            const url = extractField(block, 'link') || extractField(block, 'guid')
+            const pubDate = extractField(block, 'pubDate')
+            if (headline) items.push({ headline, url: url?.trim() || '', datetime: pubDate ? Math.floor(new Date(pubDate).getTime() / 1000) : 0, source: 'Yahoo Finance' })
+          }
+          res.setHeader('Content-Type', 'application/json')
+          res.end(JSON.stringify(items))
+        } catch {
+          res.setHeader('Content-Type', 'application/json')
+          res.end(JSON.stringify([]))
+        }
+      })
+    },
+  }
+}
+
 // Dev-only middleware: replicates api/americanbulls.js for local `vite dev`
 function americanBullsDevPlugin() {
   const SIGNALS = ['STRONG BUY', 'STRONG SELL', 'STAY LONG', 'STAY SHORT', 'BUY', 'SELL']
@@ -59,6 +104,7 @@ export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
+    newsDevPlugin(),
     americanBullsDevPlugin(),
   ],
   server: {
