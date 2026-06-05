@@ -134,7 +134,7 @@ export function createScanner() {
     emit()
   }
 
-  async function pass2(mode, { concurrency = 8, maxCandidates = 200 } = {}) {
+  async function pass2(mode, { concurrency = 8, maxCandidates = 50 } = {}) {
     const isUp = mode === 'gap_up'
 
     // TV mode: fetch earnings once (1 call total) shared across all candidates.
