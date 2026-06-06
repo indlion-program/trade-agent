@@ -294,7 +294,26 @@ export function ScannerScreen({ onSelectStock }) {
           </>
         )}
 
-        {/* Empty state */}
+        {/* No-results banner — scan ran but found 0 candidates */}
+        {scanState.phase === 'done' && candidateDisplay.length === 0 && searchOnly.length === 0 && (
+          <div className="rounded-xl border p-5 text-center"
+            style={{ background: '#1a1a1a', borderColor: '#2a2a2a' }}>
+            <div className="text-3xl mb-3">📭</div>
+            <div className="text-sm font-semibold mb-1" style={{ color: '#f1f5f9' }}>
+              No gap stocks found
+            </div>
+            <div className="text-xs leading-relaxed" style={{ color: '#64748b' }}>
+              The scanner found 0 pre-market movers matching your criteria.
+              <br /><br />
+              <span style={{ color: '#475569' }}>
+                This is normal on weekends, holidays, or quiet pre-market sessions.
+                Best results during pre-market hours <strong style={{ color: '#94a3b8' }}>4 AM – 9:30 AM ET</strong> on weekdays.
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Idle empty state — scan not yet run */}
         {scanState.phase === 'idle' && candidateDisplay.length === 0 && searchOnly.length === 0 && (
           <div className="text-center py-16">
             <div className="text-5xl mb-4">⚡</div>
@@ -304,7 +323,7 @@ export function ScannerScreen({ onSelectStock }) {
             <div className="text-sm" style={{ color: '#64748b' }}>
               Scans all US stocks via TradingView in seconds.
               <br />
-              Full Finnhub analysis runs only on gap candidates.
+              No API limit — all candidates analyzed instantly.
             </div>
             <div className="mt-6 inline-block text-xs px-3 py-1.5 rounded-full"
               style={{ background: '#1a1a1a', color: '#94a3b8', border: '1px solid #2a2a2a' }}>

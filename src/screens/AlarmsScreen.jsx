@@ -3,7 +3,6 @@ import { Header } from '../components/Header'
 import { getAlarms, addAlarm, removeAlarm, markTriggered, clearTriggered } from '../services/alarms'
 import { alertPriceAlarm } from '../services/notify'
 import { subscribeTicker } from '../services/websocket'
-import { getQuote } from '../services/finnhub'
 
 export function AlarmsScreen() {
   const [alarms, setAlarms] = useState(getAlarms)
@@ -41,13 +40,6 @@ export function AlarmsScreen() {
           checkCrossings(sym, price)
         })
       }
-    }
-
-    // Seed initial quote price while waiting for first WebSocket tick
-    for (const sym of needed) {
-      getQuote(sym)
-        .then(q => { if (q?.c) setLivePrices(prev => prev[sym] == null ? { ...prev, [sym]: q.c } : prev) })
-        .catch(() => {})
     }
 
     return () => {
