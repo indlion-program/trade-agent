@@ -7,7 +7,7 @@ import { TradePlan } from '../components/TradePlan'
 import { NewsFeed } from '../components/NewsFeed'
 import { LivePriceTicker } from '../components/LivePriceTicker'
 import { SkeletonDetail } from '../components/SkeletonCard'
-import { fetchFullAnalysis } from '../services/finnhub'
+import { fetchLightAnalysis } from '../services/finnhub'
 import { BuyModal } from '../components/BuyModal'
 import { runAllFilters, filterAmericanBulls, computeScore } from '../utils/filters'
 import { fetchAmericanBullsSignal } from '../services/americanbulls'
@@ -77,9 +77,11 @@ export function DetailScreen({ stockData: initialData, onBack }) {
     return () => { cancelled = true }
   }, [symbol])
 
-  // Refresh full data in background — preserve tvData + mode so Fibonacci anchors survive
+  // Refresh news in background using Yahoo RSS — no Finnhub calls, tvData preserved
   useEffect(() => {
-    fetchFullAnalysis(symbol).then(raw => {
+    const tv = initialData.tvData
+    if (!tv) return
+    fetchLightAnalysis(symbol, initialData.quote, tv, null).then(raw => {
       const filterResult = runAllFilters(raw, mode)
       const newsClassified = classifyNewsList(raw.news || [])
       setData(prev => ({ ...raw, filterResult, newsClassified, tvData: prev.tvData, mode: prev.mode }))

@@ -58,6 +58,29 @@ All changes are documented here in order. Each entry lists what changed, why, an
 
 ---
 
+#### BUG-03 · Scanner returns 0 results on weekends / after-hours ✅ FIXED
+- **File**: `src/services/tradingview.js`
+- **Root cause**: TV screener filter used `premarket_change` which is `null` outside pre-market hours (weekends, evenings, market hours). Screenshot showed TradingView manually finding 5 gap stocks (MU -13%, LULU -8%, ACMR -15%) while our scanner returned 0/0.
+- **Fix**: Changed filter field from `premarket_change` → `change` (total % change from prev close, always populated 24/7). Also removed `premarket_volume` filter (null outside pre-market) and updated sort field to `change`. Quote `dp` now uses `pmChange ?? change` so pre-market change is preferred but daily change is shown when PM data unavailable.
+- **Compile errors**: None
+- **Runtime errors**: None
+- **Status**: ✅ FIXED
+
+#### BUG-04 · Finnhub REST API still used in scan/search/detail ✅ FIXED
+- **Files**: `scanner.js`, `ScannerScreen.jsx`, `DetailScreen.jsx`
+- **Root cause**: `fetchFullAnalysis` (5 Finnhub REST calls per stock) was still imported and called in: (1) DetailScreen on mount to refresh data, (2) ScannerScreen `handleSearch` for manual ticker lookup, (3) scanner.js pass-2 fallback for non-TV candidates, (4) scanner.js `refreshAnalysis`.
+- **Fix**:
+  - `scanner.js`: Removed `pass1Finnhub`, removed `fetchFullAnalysis` import, removed `refreshAnalysis`, removed Finnhub fallback (TV screener failure shows error instead). Pass-2 uses `fetchLightAnalysis` (Yahoo RSS) only.
+  - `tradingview.js`: Added `tvSingleStock(symbol)` — looks up a single ticker in TV screener (tries NASDAQ/NYSE/AMEX prefixes).
+  - `ScannerScreen.jsx`: `handleSearch` now calls `tvSingleStock` + `fetchLightAnalysis` instead of `fetchFullAnalysis`.
+  - `DetailScreen.jsx`: Background refresh now calls `fetchLightAnalysis` with existing `tvData` instead of `fetchFullAnalysis`.
+- **Finnhub remaining**: WebSocket only (`wss://ws.finnhub.io`) for live prices in Alarms + DetailScreen.
+- **Compile errors**: None
+- **Runtime errors**: None
+- **Status**: ✅ FIXED
+
+---
+
 ### PENDING FIXES (queue)
 
 *None — all known bugs resolved.*

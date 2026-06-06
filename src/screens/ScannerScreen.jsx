@@ -6,7 +6,8 @@ import { ScanProgress } from '../components/ScanProgress'
 import { UniverseSelector } from '../components/UniverseSelector'
 import { usePullToRefresh } from '../hooks/usePullToRefresh'
 import { useScanner } from '../hooks/useScanner'
-import { fetchFullAnalysis, clearCache } from '../services/finnhub'
+import { fetchLightAnalysis, clearCache } from '../services/finnhub'
+import { tvSingleStock } from '../services/tradingview'
 import { runAllFilters, STRATEGY_CONFIG } from '../utils/filters'
 import { classifyNewsList } from '../utils/newsClassifier'
 import { UNIVERSE_GROUPS } from '../data/universe'
@@ -73,10 +74,11 @@ export function ScannerScreen({ onSelectStock }) {
     if (!sym) return
     setSearching(true)
     try {
-      const raw = await fetchFullAnalysis(sym)
+      const { symbol, quote, tvData } = await tvSingleStock(sym)
+      const raw = await fetchLightAnalysis(symbol, quote, tvData, null)
       const filterResult = runAllFilters(raw, strategyMode)
       const newsClassified = classifyNewsList(raw.news || [])
-      const data = { ...raw, filterResult, newsClassified, mode: strategyMode }
+      const data = { ...raw, tvData, filterResult, newsClassified, mode: strategyMode }
       setSearchResults(prev => ({ ...prev, [sym]: data }))
       onSelectStock(data)
     } catch (err) {
