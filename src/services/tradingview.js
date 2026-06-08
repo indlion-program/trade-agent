@@ -1,44 +1,123 @@
-// TradingView screener — free, no API key, returns thousands of stocks in one call.
-// Used for pass-1 pre-screen instead of one Finnhub /quote call per symbol.
+// Screener service — works on both GitHub Pages (static) and Vercel (serverless).
 //
-// In dev: calls /api/screener (Vercel proxy dev server via vite proxy)
-// In prod: calls /api/screener (Vercel edge function)
+// Data source priority:
+//   1. /api/screener proxy (Vercel) → tries TradingView, falls back to Yahoo
+//   2. Yahoo Finance direct from browser (GitHub Pages / any static host)
+//      query2.finance.yahoo.com has CORS headers that allow browser fetch
 
 import { STRATEGY_CONFIG } from '../utils/filters'
 
 const TV_PROXY = '/api/screener'
 
-// Always go through the /api/screener proxy. A direct browser call to
-// scanner.tradingview.com is blocked by CORS, so there's no point trying it.
-// The proxy (Vercel Edge function) handles CORS and falls back to Yahoo
-// Finance if TradingView itself is unreachable.
-async function postScreener(body) {
-  const r = await fetch(TV_PROXY, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  if (!r.ok) {
-    let detail = ''
-    try { detail = (await r.json())?.error || '' } catch {}
-    throw new Error(`Screener HTTP ${r.status}${detail ? ` — ${detail}` : ''}`)
-  }
-  return r.json()
+// ── Yahoo Finance helpers (used when proxy is unavailable) ─────────────────
+
+function mapYahooExchange(ex) {
+  if (!ex) return 'NASDAQ'
+  if (ex === 'NYQ' || ex === 'NYS' || ex === 'NYSE') return 'NYSE'
+  return 'NASDAQ' // NMS, NGM, NMR, NCM = NASDAQ
 }
 
-// Column index map — must match the `columns` array below
+// Translate a Yahoo Finance quote object into the same column array format
+// that TradingView screener returns, so normalizeItem() works unchanged.
+// Column order: 0:name 1:prevClose 2:change% 3:vol 4:cap 5:sector
+//               6:exchange 7:description 8:avgVol10d 9:pmChange
+//               10:pmClose 11:pmHigh 12:pmLow 13:pmVolume 14:pe
+function yahooToRow(q) {
+  const exchange = mapYahooExchange(q.exchange ?? q.fullExchangeName)
+  return {
+    s: `${exchange}:${q.symbol}`,
+    d: [
+      q.symbol,
+      q.regularMarketPreviousClose ?? q.regularMarketPrice ?? null,
+      q.regularMarketChangePercent ?? null,
+      q.regularMarketVolume ?? null,
+      q.marketCap ?? null,
+      q.sector ?? '',
+      exchange,
+      q.shortName ?? q.longName ?? q.symbol,
+      q.averageDailyVolume10Day ?? null,
+      q.preMarketChangePercent ?? null,
+      q.preMarketPrice ?? null,
+      null,   // pmHigh — not in Yahoo screener response
+      null,   // pmLow  — not in Yahoo screener response
+      q.preMarketVolume ?? null,
+      q.trailingPE ?? null,
+    ],
+  }
+}
+
+// Fetch Yahoo Finance predefined screener directly from the browser.
+// query2.finance.yahoo.com sends Access-Control-Allow-Origin: * so this
+// works from any origin (GitHub Pages, localhost, etc.)
+async function yahooScreen(isGapUp) {
+  const scrId = isGapUp ? 'day_gainers' : 'day_losers'
+  const url = `https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?scrIds=${scrId}&count=250&formatted=false&lang=en-US&region=US`
+  const res = await fetch(url, { headers: { Accept: 'application/json' } })
+  if (!res.ok) throw new Error(`Yahoo Finance HTTP ${res.status}`)
+  const json = await res.json()
+  const quotes = json?.finance?.result?.[0]?.quotes ?? []
+  if (!quotes.length) throw new Error('Yahoo Finance returned 0 quotes')
+  return { totalCount: quotes.length, data: quotes.map(yahooToRow) }
+}
+
+// Fetch a single Yahoo Finance quote by symbol (for manual search fallback)
+async function yahooSingleQuote(symbol) {
+  const url = `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbol)}&formatted=false&lang=en-US&region=US`
+  const res = await fetch(url, { headers: { Accept: 'application/json' } })
+  if (!res.ok) throw new Error(`Yahoo Finance HTTP ${res.status}`)
+  const json = await res.json()
+  const q = json?.quoteResponse?.result?.[0]
+  if (!q) throw new Error(`${symbol} not found`)
+  return yahooToRow(q)
+}
+
+// ── Proxy + fallback ────────────────────────────────────────────────────────
+
+// Returns parsed screener JSON in TV format.
+// Tries the server proxy first; if the proxy is missing (GitHub Pages 404/405)
+// or broken, falls back to calling Yahoo Finance directly from the browser.
+async function postScreener(body) {
+  let proxyStatus = null
+  try {
+    const r = await fetch(TV_PROXY, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    proxyStatus = r.status
+    if (r.ok) return r.json()
+    // 503 = proxy ran but all upstream sources failed → don't try Yahoo again
+    if (r.status === 503) {
+      let detail = ''
+      try { detail = (await r.json())?.error || '' } catch {}
+      throw new Error(detail || 'Screener proxy: all sources unavailable')
+    }
+    // 404 / 405 = proxy function doesn't exist (GitHub Pages static host)
+    // → fall through to direct Yahoo Finance browser call
+  } catch (e) {
+    // Re-throw real proxy errors, fall through for missing proxy
+    if (proxyStatus === 503 || (e.message && !e.message.includes('fetch'))) throw e
+  }
+
+  // Direct Yahoo Finance from browser (works on GitHub Pages)
+  const isGapUp = body?.sort?.sortOrder === 'desc'
+  return yahooScreen(isGapUp)
+}
+
+// ── Column map + columns list ──────────────────────────────────────────────
+
 const COL = {
   name:        0,
-  close:       1,   // previous regular-session close (always present)
-  change:      2,   // % change from prev close — always populated 24/7
-  volume:      3,   // regular session volume
+  close:       1,
+  change:      2,
+  volume:      3,
   marketCap:   4,
   sector:      5,
   exchange:    6,
   description: 7,
   avgVol10d:   8,
-  pmChange:    9,   // pre-market % change — null outside 4–9:30 AM ET
-  pmClose:     10,  // pre-market last price — null outside 4–9:30 AM ET
+  pmChange:    9,
+  pmClose:     10,
   pmHigh:      11,
   pmLow:       12,
   pmVolume:    13,
@@ -58,9 +137,6 @@ function buildRequest(mode = 'gap_down', limit = 500) {
   const isUp = mode === 'gap_up'
   const isPMGap = mode === 'pre_market_gap'
 
-  // Server-side: filter only by always-present, reliable fields.
-  // Change/PE thresholds applied client-side — TV screener returns 0
-  // results when those fields are null (weekends, missing PE data).
   const filter = [
     { left: 'close',                   operation: 'greater',  right: (cfg.minPrice ?? 5) - 1 },
     { left: 'exchange',                operation: 'in_range', right: ['NASDAQ', 'NYSE'] },
@@ -68,9 +144,6 @@ function buildRequest(mode = 'gap_down', limit = 500) {
     { left: 'average_volume_10d_calc', operation: 'greater',  right: (cfg.minAvgVol ?? 700_000) * 0.7 },
   ]
 
-  // pre_market_gap: require pre-market volume server-side.
-  // premarket_volume is null outside 4–9:30 AM ET, so this naturally
-  // returns 0 results outside pre-market hours — correct for this mode.
   if (isPMGap && cfg.minPmVol > 0) {
     filter.push({ left: 'premarket_volume', operation: 'greater', right: cfg.minPmVol * 0.5 })
   }
@@ -81,7 +154,6 @@ function buildRequest(mode = 'gap_down', limit = 500) {
     symbols: { query: { types: ['stock', 'fund'] }, tickers: [] },
     columns: COLUMNS,
     sort: {
-      // pre_market_gap sorts by premarket_change; others by regular change (works 24/7)
       sortBy: isPMGap ? 'premarket_change' : 'change',
       sortOrder: isUp ? 'desc' : 'asc',
     },
@@ -98,7 +170,6 @@ function normalizeItem(item, mode) {
   const pmClose   = d[COL.pmClose]
   const prevClose = d[COL.close]
 
-  // dp: prefer pre-market change (when available); fall back to daily change
   const dp = (pmChange != null && pmChange !== 0) ? pmChange : (d[COL.change] ?? null)
 
   return {
@@ -132,21 +203,31 @@ function normalizeItem(item, mode) {
   }
 }
 
-// Fetch TV screener data for a single ticker (used for manual search).
-// Tries NASDAQ, NYSE, AMEX prefixes and returns the first match.
+// ── Public exports ─────────────────────────────────────────────────────────
+
+// Manual ticker search — proxy first, Yahoo quote fallback
 export async function tvSingleStock(symbol) {
-  const tickers = ['NASDAQ', 'NYSE', 'AMEX'].map(ex => `${ex}:${symbol}`)
-  const body = {
-    symbols: { query: { types: ['stock', 'fund'] }, tickers },
-    columns: COLUMNS,
-    range: [0, 1],
+  // Try proxy
+  try {
+    const tickers = ['NASDAQ', 'NYSE', 'AMEX'].map(ex => `${ex}:${symbol}`)
+    const body = { symbols: { query: { types: ['stock', 'fund'] }, tickers }, columns: COLUMNS, range: [0, 1] }
+    const r = await fetch(TV_PROXY, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    if (r.ok) {
+      const json = await r.json()
+      if (json.data?.length) return normalizeItem(json.data[0], 'gap_down')
+    }
+    if (r.status === 503) throw new Error('Screener proxy unavailable')
+    // 404/405 → fall through to Yahoo
+  } catch (e) {
+    if (e.message.includes('proxy')) throw e
   }
-  const json = await postScreener(body)
-  if (!json.data?.length) throw new Error(`${symbol} not found in TV screener`)
-  return normalizeItem(json.data[0], 'gap_down')
+
+  // Direct Yahoo Finance quote
+  const row = await yahooSingleQuote(symbol)
+  return normalizeItem(row, 'gap_down')
 }
 
-// Returns normalized candidate objects for the given strategy mode.
+// Main scan — returns normalized candidate list for the given strategy mode
 export async function tvPreScreen(mode = 'gap_down') {
   const cfg = STRATEGY_CONFIG[mode] ?? STRATEGY_CONFIG.gap_down
   const isUp = mode === 'gap_up'
@@ -154,25 +235,15 @@ export async function tvPreScreen(mode = 'gap_down') {
   const body = buildRequest(mode)
 
   const json = await postScreener(body)
-  if (!json.data) throw new Error('TV screener: unexpected response format')
+  if (!json.data) throw new Error('Screener: unexpected response format')
 
   const candidates = json.data.map(item => normalizeItem(item, mode))
 
-  // Client-side change filter — reliable regardless of server-side field behavior.
   return candidates.filter(({ quote, tvData }) => {
     const dp = quote.dp
     if (dp == null) return false
-
     if (isUp) return dp >= (cfg.minGain ?? 5) - 0.5
-
-    if (isPMGap) {
-      // For pre_market_gap, dp must come from actual pre-market data (pmChange).
-      // If pmChange is null, TV returned no pre-market data for this stock.
-      const pmChange = tvData?.pmVolume != null ? quote.dp : null
-      if (pmChange == null && tvData?.pmVolume == null) return false
-    }
-
-    // gap_down / pre_market_gap / earnings_down
+    if (isPMGap && tvData?.pmVolume == null) return false
     if (dp > (cfg.minDrop ?? -3) + 0.5) return false
     if (cfg.maxDrop != null && dp < cfg.maxDrop - 0.5) return false
     return true
