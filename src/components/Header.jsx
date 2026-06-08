@@ -35,6 +35,19 @@ function formatCountdown(secs) {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
+// Build time is injected by Vite at build time — equals Vercel deploy time.
+function formatBuildTime() {
+  try {
+    const d = new Date(__BUILD_TIME__)
+    const mon = d.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' })
+    const day = d.getUTCDate()
+    const hh  = d.getUTCHours().toString().padStart(2, '0')
+    const mm  = d.getUTCMinutes().toString().padStart(2, '0')
+    return `${mon} ${day} · ${hh}:${mm}`
+  } catch { return null }
+}
+const BUILD_LABEL = formatBuildTime()
+
 export function Header({ onBack, title, subtitle }) {
   const { time, date, status } = useMarketClock()
   const [apiCalls, setApiCalls] = useState(window.__apiCallsRemaining ?? 55)
@@ -100,13 +113,25 @@ export function Header({ onBack, title, subtitle }) {
 
           <div className="flex items-center gap-2">
             {/* API counter + queue depth */}
-            <span
-              className="text-xs font-mono px-1.5 py-0.5 rounded"
-              style={{ color: apiCalls < 10 ? '#ef4444' : '#64748b', background: '#1a1a1a' }}
-              title={queued > 0 ? `${queued} call(s) queued` : ''}
-            >
-              {apiCalls}/55{queued > 0 ? ` ·${queued}` : ''}
-            </span>
+            <div className="flex items-center gap-1">
+              <span
+                className="text-xs font-mono px-1.5 py-0.5 rounded"
+                style={{ color: apiCalls < 10 ? '#ef4444' : '#64748b', background: '#1a1a1a' }}
+                title={queued > 0 ? `${queued} call(s) queued` : ''}
+              >
+                {apiCalls}/55{queued > 0 ? ` ·${queued}` : ''}
+              </span>
+              {/* Deploy time — changes every Vercel build so you know which version is live */}
+              {BUILD_LABEL && (
+                <span
+                  className="text-xs font-mono px-1.5 py-0.5 rounded"
+                  style={{ color: '#334155', background: '#1a1a1a', border: '1px solid #222' }}
+                  title={`Deployed ${__BUILD_TIME__} (UTC)`}
+                >
+                  {BUILD_LABEL}
+                </span>
+              )}
+            </div>
 
             {/* Market status badge */}
             <span

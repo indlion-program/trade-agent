@@ -101,6 +101,10 @@ function americanBullsDevPlugin() {
 
 export default defineConfig({
   base: process.env.VITE_BASE_PATH || '/',
+  define: {
+    // Injected at build time = Vercel deploy time. Shown in Header near 55/55.
+    __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+  },
   plugins: [
     react(),
     tailwindcss(),
