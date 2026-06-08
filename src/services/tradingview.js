@@ -6,27 +6,24 @@
 
 import { STRATEGY_CONFIG } from '../utils/filters'
 
-const TV_DIRECT = 'https://scanner.tradingview.com/america/scan'
 const TV_PROXY = '/api/screener'
 
-// Try direct TV endpoint first (works if CORS allows).
-// Falls back to /api/screener proxy (Vercel edge function handles CORS).
+// Always go through the /api/screener proxy. A direct browser call to
+// scanner.tradingview.com is blocked by CORS, so there's no point trying it.
+// The proxy (Vercel Edge function) handles CORS and falls back to Yahoo
+// Finance if TradingView itself is unreachable.
 async function postScreener(body) {
-  try {
-    const r = await fetch(TV_DIRECT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    if (r.ok) return r.json()
-  } catch {}
-  const r2 = await fetch(TV_PROXY, {
+  const r = await fetch(TV_PROXY, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (!r2.ok) throw new Error(`TV screener HTTP ${r2.status}`)
-  return r2.json()
+  if (!r.ok) {
+    let detail = ''
+    try { detail = (await r.json())?.error || '' } catch {}
+    throw new Error(`Screener HTTP ${r.status}${detail ? ` — ${detail}` : ''}`)
+  }
+  return r.json()
 }
 
 // Column index map — must match the `columns` array below

@@ -60,7 +60,44 @@ async function tryYahooFallback(isGapUp) {
   }
 }
 
+const TV_HEADERS = {
+  'Content-Type': 'application/json',
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Accept': 'application/json, text/plain, */*',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Origin': 'https://www.tradingview.com',
+  'Referer': 'https://www.tradingview.com/screener/',
+  'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+  'sec-ch-ua-mobile': '?0',
+  'sec-ch-ua-platform': '"Windows"',
+  'Sec-Fetch-Dest': 'empty',
+  'Sec-Fetch-Mode': 'cors',
+  'Sec-Fetch-Site': 'same-site',
+}
+
 export default async function handler(req) {
+  // GET = health check / diagnostic. Open /api/screener in a browser to verify
+  // the function is deployed and see which upstream sources are reachable.
+  if (req.method === 'GET') {
+    const probe = { runtime: 'edge', ts: new Date().toISOString() }
+    try {
+      const tv = await fetch('https://scanner.tradingview.com/america/scan', {
+        method: 'POST', headers: TV_HEADERS,
+        body: JSON.stringify({ filter: [{ left: 'close', operation: 'greater', right: 5 }], columns: ['name', 'close'], range: [0, 1] }),
+      })
+      probe.tradingview = tv.status
+    } catch (e) { probe.tradingview = `err: ${e.message}` }
+    try {
+      const y = await fetch('https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved?scrIds=day_losers&count=1&formatted=false&lang=en-US&region=US', {
+        headers: { 'User-Agent': TV_HEADERS['User-Agent'], 'Accept': 'application/json' },
+      })
+      probe.yahoo = y.status
+    } catch (e) { probe.yahoo = `err: ${e.message}` }
+    return new Response(JSON.stringify(probe, null, 2), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
   if (req.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
       status: 405,
@@ -82,21 +119,7 @@ export default async function handler(req) {
   try {
     const tvRes = await fetch('https://scanner.tradingview.com/america/scan', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/plain, */*',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Origin': 'https://www.tradingview.com',
-        'Referer': 'https://www.tradingview.com/screener/',
-        'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': '"Windows"',
-        'Sec-Fetch-Dest': 'empty',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Site': 'same-site',
-      },
+      headers: TV_HEADERS,
       body,
     })
 
