@@ -61,23 +61,18 @@ function buildRequest(mode = 'gap_down', limit = 500) {
   const cfg = STRATEGY_CONFIG[mode] ?? STRATEGY_CONFIG.gap_down
   const isUp = mode === 'gap_up'
 
-  // Use `change` (total % change from previous close) as the primary filter.
-  // It is always populated — pre-market, intraday, after-hours, and weekends.
-  // `premarket_change` is null outside pre-market and caused 0 results on weekends.
+  // DO NOT filter by `change` server-side. TV screener's `change` filter is
+  // unreliable — it can return 0 results when the field is null (weekends) or
+  // uses a different numeric scale than expected. Instead:
+  //   1. Filter only by stable, always-present fields (price, exchange, cap, vol)
+  //   2. Sort by `change` so biggest movers come first in the response
+  //   3. Apply the change threshold client-side in tvPreScreen() below
   const filter = [
-    isUp
-      ? { left: 'change', operation: 'greater', right: (cfg.minGain ?? 5) - 0.5 }
-      : { left: 'change', operation: 'less',    right: (cfg.minDrop ?? -5) + 0.5 },
-    { left: 'close',                    operation: 'greater', right: (cfg.minPrice ?? 5) - 1 },
-    { left: 'exchange',                 operation: 'in_range', right: ['NASDAQ', 'NYSE'] },
-    { left: 'market_cap_basic',         operation: 'greater', right: (cfg.minMarketCap ?? 500_000_000) * 0.5 },
-    { left: 'average_volume_10d_calc',  operation: 'greater', right: (cfg.minAvgVol ?? 750_000) * 0.7 },
+    { left: 'close',                   operation: 'greater',   right: (cfg.minPrice ?? 5) - 1 },
+    { left: 'exchange',                operation: 'in_range',  right: ['NASDAQ', 'NYSE'] },
+    { left: 'market_cap_basic',        operation: 'greater',   right: (cfg.minMarketCap ?? 500_000_000) * 0.5 },
+    { left: 'average_volume_10d_calc', operation: 'greater',   right: (cfg.minAvgVol ?? 750_000) * 0.7 },
   ]
-
-  // Exclude climax selling for gap-down modes
-  if (!isUp && cfg.maxDrop !== null) {
-    filter.push({ left: 'change', operation: 'greater', right: cfg.maxDrop - 0.5 })
-  }
 
   return {
     filter,
@@ -86,7 +81,7 @@ function buildRequest(mode = 'gap_down', limit = 500) {
     columns: COLUMNS,
     sort: {
       sortBy: 'change',
-      sortOrder: isUp ? 'desc' : 'asc',
+      sortOrder: isUp ? 'desc' : 'asc',  // biggest movers come first
     },
     range: [0, limit],
   }
@@ -145,19 +140,23 @@ export async function tvSingleStock(symbol) {
 
 // Returns normalized candidate objects for the given strategy mode.
 export async function tvPreScreen(mode = 'gap_down') {
+  const cfg = STRATEGY_CONFIG[mode] ?? STRATEGY_CONFIG.gap_down
+  const isUp = mode === 'gap_up'
   const body = buildRequest(mode)
 
   const json = await postScreener(body)
   if (!json.data) throw new Error('TV screener: unexpected response format')
 
-  return json.data.map((item) => {
+  const candidates = json.data.map((item) => {
     const d = item.d
     const rawSymbol = item.s || ''
     const symbol = rawSymbol.includes(':') ? rawSymbol.split(':')[1] : rawSymbol
 
-    const pmChange = d[COL.pmChange]
-    const pmClose  = d[COL.pmClose]
+    const pmChange  = d[COL.pmChange]
+    const pmClose   = d[COL.pmClose]
     const prevClose = d[COL.close]
+    // dp: use pre-market change when available (intraday pre-market), else daily change
+    const dp = (pmChange != null && pmChange !== 0) ? pmChange : (d[COL.change] ?? null)
 
     return {
       symbol,
@@ -166,13 +165,13 @@ export async function tvPreScreen(mode = 'gap_down') {
       sector:   d[COL.sector] || '',
       mode,
       quote: {
-        c:  pmClose ?? prevClose,                          // current price
-        pc: prevClose,                                     // previous close
-        dp: pmChange ?? d[COL.change],                    // % change — PM preferred, falls back to daily
+        c:  pmClose ?? prevClose,
+        pc: prevClose,
+        dp,
         d:  null,
-        h:  d[COL.pmHigh] ?? prevClose,                   // high — PM if available, else prev close
-        l:  d[COL.pmLow]  ?? prevClose,                   // low  — PM if available, else prev close
-        v:  d[COL.pmVolume] ?? d[COL.volume] ?? 0,        // volume — PM preferred, falls back to daily
+        h:  d[COL.pmHigh] ?? prevClose,
+        l:  d[COL.pmLow]  ?? prevClose,
+        v:  d[COL.pmVolume] ?? d[COL.volume] ?? 0,
         o:  prevClose,
       },
       tvData: {
@@ -188,5 +187,16 @@ export async function tvPreScreen(mode = 'gap_down') {
         name:      d[COL.description] || symbol,
       },
     }
+  })
+
+  // Client-side change filter — reliable regardless of server-side field behavior.
+  return candidates.filter(({ quote }) => {
+    const dp = quote.dp
+    if (dp == null) return false
+    if (isUp) return dp >= (cfg.minGain ?? 5) - 0.5
+    // gap_down / earnings_down: enough of a drop but not a climax sell
+    if (dp > (cfg.minDrop ?? -5) + 0.5) return false
+    if (cfg.maxDrop != null && dp < cfg.maxDrop - 0.5) return false
+    return true
   })
 }
