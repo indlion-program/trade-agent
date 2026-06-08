@@ -7,21 +7,33 @@ function result(pass, value, reason) {
 // ─── Strategy config ──────────────────────────────────────────────────────────
 export const STRATEGY_CONFIG = {
   gap_down: {
-    label: 'Gap Down Reversal',
-    // Research: -5% to -20% fills ~60% by EOD on liquid mid/large caps.
-    // Beyond -20% is usually fundamental damage — skip.
-    minDrop: -5,
-    maxDrop: -20,
+    label: 'Gap Down',
+    minDrop: -3,               // 3%+ drop via `change` field (works 24/7)
+    maxDrop: -40,
     minGain: null,
     minPrice: 5,
-    minMarketCap: 500_000_000,  // $500M+ caps fill gaps more reliably
-    minAvgVol: 750_000,          // 750K avg vol = real institutional liquidity
-    minPmVol: 50_000,
-    minPmVolRatio: 0.10,         // 10% of avg daily vol = real pre-market interest
+    minMarketCap: 200_000_000, // $200M+
+    minAvgVol: 700_000,        // 700K avg vol
+    minPmVol: 0,               // no PM volume requirement — runs outside PM hours too
+    minPmVolRatio: 0,
+    minPE: 4,                  // PE > 4 (profitable)
+    requireEarnings: false,
+  },
+  pre_market_gap: {
+    label: 'Pre-Market Gap',
+    minDrop: -5,               // 5%+ gap down (pre-market change)
+    maxDrop: -60,
+    minGain: null,
+    minPrice: 5,
+    minMarketCap: 100_000_000,
+    minAvgVol: 700_000,
+    minPmVol: 60_000,          // PM volume > 60K
+    minPmVolRatio: 0,
+    minPE: 4,                  // PE > 4
     requireEarnings: false,
   },
   earnings_down: {
-    label: 'Earnings Gap Recovery',
+    label: 'Earnings Drop',
     minDrop: -10,
     maxDrop: -60,
     minGain: null,
@@ -30,10 +42,11 @@ export const STRATEGY_CONFIG = {
     minAvgVol: 2_000_000,
     minPmVol: 200_000,
     minPmVolRatio: 0.25,
+    minPE: 0,
     requireEarnings: true,
   },
   gap_up: {
-    label: 'Gap Up Momentum',
+    label: 'Gap Up',
     minDrop: null,
     maxDrop: null,
     minGain: 7,
@@ -42,6 +55,7 @@ export const STRATEGY_CONFIG = {
     minAvgVol: 1_500_000,
     minPmVol: 150_000,
     minPmVolRatio: 0.20,
+    minPE: 0,
     requireEarnings: false,
   },
 }
@@ -87,6 +101,18 @@ export function filterPrice(quote, cfg) {
   return result(pass, price, pass
     ? `$${price.toFixed(2)}`
     : `$${price.toFixed(2)} (needs ≥ $${cfg.minPrice})`)
+}
+
+// Filter 3b: P/E ratio > cfg.minPE (confirms stock is profitable)
+export function filterPE(metrics, cfg) {
+  if (!cfg.minPE) return result(true, null, 'P/E not required')
+  const pe = metrics?.metric?.peTTM ?? null
+  if (pe === null) return result(null, null, 'P/E unavailable (check manually)')
+  if (pe <= 0) return result(false, pe, `P/E ${pe.toFixed(1)} — not profitable`)
+  const pass = pe >= cfg.minPE
+  return result(pass, pe, pass
+    ? `P/E ${pe.toFixed(1)}`
+    : `P/E ${pe.toFixed(1)} (needs > ${cfg.minPE})`)
 }
 
 // Filter 4: Average daily volume
@@ -239,7 +265,7 @@ export function checkNewsAvoid(news) {
 export function computeScore(filters, quote, mode = 'gap_down') {
   if (!filters) return 0
 
-  const hardFilterKeys = ['preMarketMove', 'maxGap', 'price', 'dailyVolume',
+  const hardFilterKeys = ['preMarketMove', 'maxGap', 'price', 'pe', 'dailyVolume',
     'preMarketVolume', 'pmVolumeRatio', 'marketCap', 'noReverseSplit',
     'notEarningsDay', 'riskReward']
   const anyHardFail = hardFilterKeys.some(k => filters[k]?.pass === false)
@@ -287,21 +313,22 @@ export function runAllFilters(data, mode = 'gap_down') {
   const { symbol, quote, profile, metrics, news, earnings, splits, tvData } = data
   const cfg = STRATEGY_CONFIG[mode] ?? STRATEGY_CONFIG.gap_down
 
-  const f1  = filterPreMarketMove(quote, cfg)
-  const f2  = filterMaxGap(quote, cfg)
-  const f3  = filterPrice(quote, cfg)
-  const f4  = filterDailyVolume(metrics, cfg)
-  const f5  = filterPreMarketVolume(quote, cfg)
-  const f6  = filterPMVolumeRatio(quote, metrics, cfg)
-  const f7  = filterMarketCap(profile, cfg)
-  const f8  = filterNoReverseSplit(splits)
-  const f9  = filterEarningsDay(earnings, symbol, cfg)
-  const f10 = filterEntryTiming()
-  const f11 = filterAmericanBulls()
-  const f12 = filterRR(quote, cfg)
+  const f1   = filterPreMarketMove(quote, cfg)
+  const f2   = filterMaxGap(quote, cfg)
+  const f3   = filterPrice(quote, cfg)
+  const f3b  = filterPE(metrics, cfg)
+  const f4   = filterDailyVolume(metrics, cfg)
+  const f5   = filterPreMarketVolume(quote, cfg)
+  const f6   = filterPMVolumeRatio(quote, metrics, cfg)
+  const f7   = filterMarketCap(profile, cfg)
+  const f8   = filterNoReverseSplit(splits)
+  const f9   = filterEarningsDay(earnings, symbol, cfg)
+  const f10  = filterEntryTiming()
+  const f11  = filterAmericanBulls()
+  const f12  = filterRR(quote, cfg)
 
   const newsAvoid = checkNewsAvoid(news)
-  const allFilters = [f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12]
+  const allFilters = [f1, f2, f3, f3b, f4, f5, f6, f7, f8, f9, f10, f11, f12]
 
   const hardFails = allFilters.filter(f => f.pass === false).length
   const warnings  = allFilters.filter(f => f.pass === null).length
@@ -314,6 +341,7 @@ export function runAllFilters(data, mode = 'gap_down') {
     preMarketMove:  f1,
     maxGap:         f2,
     price:          f3,
+    pe:             f3b,
     dailyVolume:    f4,
     preMarketVolume: f5,
     pmVolumeRatio:  f6,

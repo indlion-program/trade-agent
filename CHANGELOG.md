@@ -81,6 +81,14 @@ All changes are documented here in order. Each entry lists what changed, why, an
 
 ---
 
+#### BUG-05 · TV screener proxy returns HTTP 405 → 0 scan results ✅ FIXED
+- **File**: `api/screener.js`
+- **Root cause**: Two issues combined: (1) `body: JSON.stringify(req.body)` — Vercel auto-parses the request body into `req.body`, so re-serializing it can produce an incorrectly shaped payload that TradingView rejects with 405. (2) Minimal `User-Agent: 'Mozilla/5.0'` — TradingView likely blocks non-browser-looking requests from Vercel server IPs without a full browser UA string.
+- **Fix**: Read raw body from the request stream (`req.on('data')`) to avoid re-serialization. Added comprehensive browser-like headers: full Chrome 124 User-Agent, Accept, Accept-Language, Accept-Encoding, sec-ch-ua, Sec-Fetch-Dest/Mode/Site. Also improved error response to include TradingView's response body for future debugging.
+- **Status**: ✅ FIXED
+
+---
+
 ### PENDING FIXES (queue)
 
 *None — all known bugs resolved.*

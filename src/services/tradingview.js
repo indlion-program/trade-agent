@@ -9,9 +9,8 @@ import { STRATEGY_CONFIG } from '../utils/filters'
 const TV_DIRECT = 'https://scanner.tradingview.com/america/scan'
 const TV_PROXY = '/api/screener'
 
-// Try direct TV endpoint first (works on GitHub Pages if CORS allows).
-// Falls back to /api/screener proxy (works on Vercel + local dev).
-// If both fail, throws → scanner.js catches and switches to Finnhub pass-1.
+// Try direct TV endpoint first (works if CORS allows).
+// Falls back to /api/screener proxy (Vercel edge function handles CORS).
 async function postScreener(body) {
   try {
     const r = await fetch(TV_DIRECT, {
@@ -30,19 +29,19 @@ async function postScreener(body) {
   return r2.json()
 }
 
-// Column index map — must match the `columns` array in buildRequest()
+// Column index map — must match the `columns` array below
 const COL = {
   name:        0,
-  close:       1,   // current price (last trade / previous close outside session)
-  change:      2,   // % change from previous close — always populated, works 24/7
+  close:       1,   // previous regular-session close (always present)
+  change:      2,   // % change from prev close — always populated 24/7
   volume:      3,   // regular session volume
   marketCap:   4,
   sector:      5,
   exchange:    6,
   description: 7,
   avgVol10d:   8,
-  pmChange:    9,   // pre-market % change — null outside pre-market hours
-  pmClose:     10,  // pre-market last price — null outside pre-market hours
+  pmChange:    9,   // pre-market % change — null outside 4–9:30 AM ET
+  pmClose:     10,  // pre-market last price — null outside 4–9:30 AM ET
   pmHigh:      11,
   pmLow:       12,
   pmVolume:    13,
@@ -60,19 +59,24 @@ const COLUMNS = [
 function buildRequest(mode = 'gap_down', limit = 500) {
   const cfg = STRATEGY_CONFIG[mode] ?? STRATEGY_CONFIG.gap_down
   const isUp = mode === 'gap_up'
+  const isPMGap = mode === 'pre_market_gap'
 
-  // DO NOT filter by `change` server-side. TV screener's `change` filter is
-  // unreliable — it can return 0 results when the field is null (weekends) or
-  // uses a different numeric scale than expected. Instead:
-  //   1. Filter only by stable, always-present fields (price, exchange, cap, vol)
-  //   2. Sort by `change` so biggest movers come first in the response
-  //   3. Apply the change threshold client-side in tvPreScreen() below
+  // Server-side: filter only by always-present, reliable fields.
+  // Change/PE thresholds applied client-side — TV screener returns 0
+  // results when those fields are null (weekends, missing PE data).
   const filter = [
-    { left: 'close',                   operation: 'greater',   right: (cfg.minPrice ?? 5) - 1 },
-    { left: 'exchange',                operation: 'in_range',  right: ['NASDAQ', 'NYSE'] },
-    { left: 'market_cap_basic',        operation: 'greater',   right: (cfg.minMarketCap ?? 500_000_000) * 0.5 },
-    { left: 'average_volume_10d_calc', operation: 'greater',   right: (cfg.minAvgVol ?? 750_000) * 0.7 },
+    { left: 'close',                   operation: 'greater',  right: (cfg.minPrice ?? 5) - 1 },
+    { left: 'exchange',                operation: 'in_range', right: ['NASDAQ', 'NYSE'] },
+    { left: 'market_cap_basic',        operation: 'greater',  right: (cfg.minMarketCap ?? 200_000_000) * 0.5 },
+    { left: 'average_volume_10d_calc', operation: 'greater',  right: (cfg.minAvgVol ?? 700_000) * 0.7 },
   ]
+
+  // pre_market_gap: require pre-market volume server-side.
+  // premarket_volume is null outside 4–9:30 AM ET, so this naturally
+  // returns 0 results outside pre-market hours — correct for this mode.
+  if (isPMGap && cfg.minPmVol > 0) {
+    filter.push({ left: 'premarket_volume', operation: 'greater', right: cfg.minPmVol * 0.5 })
+  }
 
   return {
     filter,
@@ -80,43 +84,36 @@ function buildRequest(mode = 'gap_down', limit = 500) {
     symbols: { query: { types: ['stock', 'fund'] }, tickers: [] },
     columns: COLUMNS,
     sort: {
-      sortBy: 'change',
-      sortOrder: isUp ? 'desc' : 'asc',  // biggest movers come first
+      // pre_market_gap sorts by premarket_change; others by regular change (works 24/7)
+      sortBy: isPMGap ? 'premarket_change' : 'change',
+      sortOrder: isUp ? 'desc' : 'asc',
     },
     range: [0, limit],
   }
 }
 
-// Fetch TV screener data for a single ticker symbol (used for manual search).
-// Tries NASDAQ, NYSE, AMEX prefixes and returns the first match.
-export async function tvSingleStock(symbol) {
-  const tickers = ['NASDAQ', 'NYSE', 'AMEX'].map(ex => `${ex}:${symbol}`)
-  const body = {
-    symbols: { query: { types: ['stock', 'fund'] }, tickers },
-    columns: COLUMNS,
-    range: [0, 1],
-  }
-  const json = await postScreener(body)
-  if (!json.data?.length) throw new Error(`${symbol} not found in TV screener`)
-
-  const item = json.data[0]
+function normalizeItem(item, mode) {
   const d = item.d
   const rawSymbol = item.s || ''
-  const sym = rawSymbol.includes(':') ? rawSymbol.split(':')[1] : rawSymbol
+  const symbol = rawSymbol.includes(':') ? rawSymbol.split(':')[1] : rawSymbol
 
   const pmChange  = d[COL.pmChange]
   const pmClose   = d[COL.pmClose]
   const prevClose = d[COL.close]
 
+  // dp: prefer pre-market change (when available); fall back to daily change
+  const dp = (pmChange != null && pmChange !== 0) ? pmChange : (d[COL.change] ?? null)
+
   return {
-    symbol: sym,
+    symbol,
     exchange: d[COL.exchange] || rawSymbol.split(':')[0] || '',
-    name:     d[COL.description] || sym,
+    name:     d[COL.description] || symbol,
     sector:   d[COL.sector] || '',
+    mode,
     quote: {
       c:  pmClose ?? prevClose,
       pc: prevClose,
-      dp: pmChange ?? d[COL.change],
+      dp,
       d:  null,
       h:  d[COL.pmHigh] ?? prevClose,
       l:  d[COL.pmLow]  ?? prevClose,
@@ -133,69 +130,53 @@ export async function tvSingleStock(symbol) {
       prevClose,
       sector:    d[COL.sector] || '',
       exchange:  d[COL.exchange] || '',
-      name:      d[COL.description] || sym,
+      name:      d[COL.description] || symbol,
     },
   }
+}
+
+// Fetch TV screener data for a single ticker (used for manual search).
+// Tries NASDAQ, NYSE, AMEX prefixes and returns the first match.
+export async function tvSingleStock(symbol) {
+  const tickers = ['NASDAQ', 'NYSE', 'AMEX'].map(ex => `${ex}:${symbol}`)
+  const body = {
+    symbols: { query: { types: ['stock', 'fund'] }, tickers },
+    columns: COLUMNS,
+    range: [0, 1],
+  }
+  const json = await postScreener(body)
+  if (!json.data?.length) throw new Error(`${symbol} not found in TV screener`)
+  return normalizeItem(json.data[0], 'gap_down')
 }
 
 // Returns normalized candidate objects for the given strategy mode.
 export async function tvPreScreen(mode = 'gap_down') {
   const cfg = STRATEGY_CONFIG[mode] ?? STRATEGY_CONFIG.gap_down
   const isUp = mode === 'gap_up'
+  const isPMGap = mode === 'pre_market_gap'
   const body = buildRequest(mode)
 
   const json = await postScreener(body)
   if (!json.data) throw new Error('TV screener: unexpected response format')
 
-  const candidates = json.data.map((item) => {
-    const d = item.d
-    const rawSymbol = item.s || ''
-    const symbol = rawSymbol.includes(':') ? rawSymbol.split(':')[1] : rawSymbol
-
-    const pmChange  = d[COL.pmChange]
-    const pmClose   = d[COL.pmClose]
-    const prevClose = d[COL.close]
-    // dp: use pre-market change when available (intraday pre-market), else daily change
-    const dp = (pmChange != null && pmChange !== 0) ? pmChange : (d[COL.change] ?? null)
-
-    return {
-      symbol,
-      exchange: d[COL.exchange] || rawSymbol.split(':')[0] || '',
-      name:     d[COL.description] || symbol,
-      sector:   d[COL.sector] || '',
-      mode,
-      quote: {
-        c:  pmClose ?? prevClose,
-        pc: prevClose,
-        dp,
-        d:  null,
-        h:  d[COL.pmHigh] ?? prevClose,
-        l:  d[COL.pmLow]  ?? prevClose,
-        v:  d[COL.pmVolume] ?? d[COL.volume] ?? 0,
-        o:  prevClose,
-      },
-      tvData: {
-        marketCap: d[COL.marketCap],
-        avgVol10d: d[COL.avgVol10d],
-        pe:        d[COL.pe],
-        pmHigh:    d[COL.pmHigh],
-        pmLow:     d[COL.pmLow],
-        pmVolume:  d[COL.pmVolume],
-        prevClose,
-        sector:    d[COL.sector] || '',
-        exchange:  d[COL.exchange] || '',
-        name:      d[COL.description] || symbol,
-      },
-    }
-  })
+  const candidates = json.data.map(item => normalizeItem(item, mode))
 
   // Client-side change filter — reliable regardless of server-side field behavior.
-  return candidates.filter(({ quote }) => {
+  return candidates.filter(({ quote, tvData }) => {
     const dp = quote.dp
     if (dp == null) return false
+
     if (isUp) return dp >= (cfg.minGain ?? 5) - 0.5
-    // gap_down / earnings_down: enough of a drop but not a climax sell
-    if (dp > (cfg.minDrop ?? -5) + 0.5) return false
+
+    if (isPMGap) {
+      // For pre_market_gap, dp must come from actual pre-market data (pmChange).
+      // If pmChange is null, TV returned no pre-market data for this stock.
+      const pmChange = tvData?.pmVolume != null ? quote.dp : null
+      if (pmChange == null && tvData?.pmVolume == null) return false
+    }
+
+    // gap_down / pre_market_gap / earnings_down
+    if (dp > (cfg.minDrop ?? -3) + 0.5) return false
     if (cfg.maxDrop != null && dp < cfg.maxDrop - 0.5) return false
     return true
   })
