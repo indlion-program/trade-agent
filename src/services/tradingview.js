@@ -10,7 +10,10 @@
 
 import { STRATEGY_CONFIG } from '../utils/filters'
 
-const TV_PROXY = '/api/screener'
+// VITE_SCREENER_PROXY: set this in your GitHub repo secrets if you're on a
+// static host (GitHub Pages). Point it at a deployed Cloudflare Worker
+// (see worker/screener.js). Falls back to /api/screener (Vercel deployment).
+const TV_PROXY = import.meta.env.VITE_SCREENER_PROXY || '/api/screener'
 
 // Returns parsed screener JSON. Throws on any non-OK response (including the
 // 404/405 you get when /api/screener doesn't exist on a static host).

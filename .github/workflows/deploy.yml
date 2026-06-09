@@ -30,6 +30,7 @@ jobs:
       - run: npm run build
         env:
           VITE_FINNHUB_KEY: ${{ secrets.VITE_FINNHUB_KEY }}
+          VITE_SCREENER_PROXY: ${{ secrets.VITE_SCREENER_PROXY }}
 
       - uses: actions/configure-pages@v5
 
