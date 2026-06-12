@@ -1,0 +1,42 @@
+name: Pre-market Scan Refresh
+
+on:
+  schedule:
+    # Every 5 min, Mon-Fri, 9:00-15:30 UTC (5:00-11:30 AM ET)
+    # Covers pre-market (4-9:30 AM ET) and first hour of regular session.
+    - cron: '*/5 9-15 * * 1-5'
+  workflow_dispatch: # allow manual trigger any time
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main (for fetch script)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: main
+
+      - name: Checkout scan-cache (for scan-data.json)
+        uses: actions/checkout@v4
+        with:
+          ref: scan-cache
+          path: cache
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch screener data
+        working-directory: cache
+        run: node ../main/scripts/fetch-scan.mjs
+
+      - name: Commit and push
+        working-directory: cache
+        run: |
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add scan-data.json
+          git diff --staged --quiet && echo "No change, skipping commit" && exit 0
+          git commit -m "scan $(date -u '+%H:%M UTC')"
+          git push

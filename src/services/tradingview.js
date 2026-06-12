@@ -1,19 +1,16 @@
 // TradingView screener proxy client (pass-1 pre-screen).
 //
-// Calls the /api/screener serverless proxy (Vercel), which fetches the
-// TradingView screener server-side (CORS + browser headers). A direct
-// browser call to scanner.tradingview.com is blocked by CORS, so the proxy
-// is required for this path.
-//
-// On a static host with no /api/screener (e.g. GitHub Pages), this throws.
-// scanner.js catches that and falls back to a direct Finnhub per-symbol scan.
+// Data flow (three-tier fallback):
+//  1. VITE_SCREENER_PROXY or /api/screener (Vercel/Cloudflare Worker proxy)
+//  2. raw.githubusercontent.com scan-cache branch — updated every 5 min by
+//     the GitHub Actions cron job (.github/workflows/scan-cron.yml).
+//     Works on any static host including GitHub Pages. Data ~0-5 min stale.
+//  3. Error — all sources unavailable.
 
 import { STRATEGY_CONFIG } from '../utils/filters'
 
-// VITE_SCREENER_PROXY: set this in your GitHub repo secrets if you're on a
-// static host (GitHub Pages). Point it at a deployed Cloudflare Worker
-// (see worker/screener.js). Falls back to /api/screener (Vercel deployment).
 const TV_PROXY = import.meta.env.VITE_SCREENER_PROXY || '/api/screener'
+const SCAN_CACHE_URL = 'https://raw.githubusercontent.com/indlion-program/trade-agent/scan-cache/scan-data.json'
 
 // Returns parsed screener JSON. Throws on any non-OK response (including the
 // 404/405 you get when /api/screener doesn't exist on a static host).
@@ -152,7 +149,22 @@ export async function tvPreScreen(mode = 'gap_down') {
   const isPMGap = mode === 'pre_market_gap'
   const body = buildRequest(mode)
 
-  const json = await postScreener(body)
+  let json
+  try {
+    json = await postScreener(body)
+  } catch (proxyErr) {
+    // Proxy unavailable (GitHub Pages has no /api/screener).
+    // Try the GitHub Actions-maintained scan cache for gap-down modes.
+    if (!isUp) {
+      const r = await fetch(SCAN_CACHE_URL, { cache: 'no-store' })
+      if (!r.ok) throw new Error(`Proxy: ${proxyErr.message} | Cache HTTP ${r.status}`)
+      json = await r.json()
+      if (!json?.data) throw new Error('Cache: unexpected format')
+    } else {
+      throw proxyErr
+    }
+  }
+
   if (!json.data) throw new Error('Screener: unexpected response format')
 
   const candidates = json.data.map(item => normalizeItem(item, mode))
